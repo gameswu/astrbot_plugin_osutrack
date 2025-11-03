@@ -68,6 +68,7 @@
 | 命令 | 参数 | 说明 |
 | ---- | ---- | ---- |
 | `update` | `[模式]` | 上传当前用户的成绩到 OSU!track（默认 osu 模式） |
+| `chart` | `[模式] [天数] [类型]` | 查看成绩统计图表 |
 
 ### 帮助
 
@@ -81,16 +82,21 @@
 
 <summary>近期更新内容</summary>
 
-## 0.2.1 - 2025-8-07
+## 0.2.2 - 2025-11-03
 
 ### 功能
-- 增加好友查看功能
-- 完成谱面查询、搜索功能
+- 增加成绩统计图表功能
+
+### 修复
+- 增加logo文件等 AstrBot >4.0 适配内容
+- 重构信息提示处理逻辑，移除了大部分硬编码提示文本
 
 </details>
 
-详细更新日志请查看 [CHANGELOG.md](docs/CHANGELOG.md)。计划开发的功能请查看 [ROADMAP.md](docs/ROADMAP.md)。
+详细更新日志请查看 [CHANGELOG.md](docs/CHANGELOG.md)。
 
 ## 💗 支持
 
 为我的仓库点一个 ⭐️ ！
+
+[OSU!](https://osu.ppy.sh/) | [OSU! API](https://osu.ppy.sh/docs/index.html) | [osutrack-api](https://github.com/Ameobea/osutrack-api)

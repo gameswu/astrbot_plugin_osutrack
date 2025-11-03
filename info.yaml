@@ -1,0 +1,258 @@
+# 固定文本信息配置文件
+# 用于存储插件中使用的各种提示、说明等大段文本信息
+
+# 账号关联相关信息
+link:
+  auth_flow: |
+    🎮 OSU 账号关联流程
+
+    请按以下步骤操作：
+    1️⃣ 点击下方链接进行 OSU 授权
+    🔗 {auth_url}
+
+    2️⃣ 完成授权后，浏览器会跳转到一个新页面
+    3️⃣ 将浏览器地址栏的完整 URL 复制并发送给我
+       （URL 包含类似 ?code=xxxxx 的授权码）
+
+    ⏰ 此操作将在 5 分钟后超时
+  
+  success: |
+    ✅ 账号关联成功！
+    🎮 OSU 用户: {username} (ID: {osu_user_id})
+    🆔 平台 ID: {platform_id}
+    🎯 现在可以使用 OSU 相关功能了！
+  
+  already_linked: |
+    ❌ 您的账号已经关联了 OSU 账号 ID: {osu_id}
+    如需重新关联，请先使用 /osu unlink 解除关联。
+  
+  config_incomplete: |
+    ❌ OSU OAuth 配置不完整，请联系管理员配置 osu_client_id 和 osu_client_secret。
+
+# 账号解绑相关信息
+unlink:
+  success: |
+    ✅ 成功解除关联！
+    已解除与 OSU 账号 ID: {osu_id} 的关联
+  
+  not_linked: |
+    ❌ 您的账号尚未关联任何 OSU 账号
+
+# 认证检查相关信息
+auth_check:
+  not_linked: |
+    ❌ 您的账号尚未关联任何 OSU 账号
+    使用 /osu link 开始关联流程
+  
+  expired: |
+    ❌ 您的 OSU 认证已过期
+    请使用 /osu link 重新认证
+  
+  insufficient_scope: |
+    ❌ 权限不足，缺少以下权限: {scopes}
+    请使用 /osu link 重新认证以获取所需权限
+
+# 批量查询相关信息
+batch_query:
+  users_prompt: |
+    📊 批量用户查询
+
+    请在接下来的消息中发送要查询的用户ID，用空格分隔：
+    📝 示例: 124493 3 2 53378
+    📝 最多支持 50 个用户ID
+    ⏰ 请在 5 分钟内发送，超时将取消查询
+  
+  mapsets_prompt: |
+    📊 批量谱面集查询
+
+    请在接下来的消息中发送要查询的谱面集ID，用空格分隔：
+    📝 示例: 41823 129891 55496 162019
+    📝 最多支持 20 个谱面集ID
+    ⏰ 请在 5 分钟内发送，超时将取消查询
+  
+  cancelled: |
+    ❌ 已取消批量查询
+  
+  timeout: |
+    ⏰ 输入超时（5分钟），批量查询已取消
+    请重新使用 /osu {command} 开始查询
+  
+  summary: |
+    ✅ 批量查询完成！成功: {success}, 失败: {failed}
+
+# 用户命令相关信息
+user:
+  usage: |
+    ❌ 请提供用户名或用户ID
+    用法: /osu user <用户名或ID> [模式] [类型]
+    示例: 
+      /osu user peppy osu name
+      /osu user 124493 taiko id
+      /osu user peppy (自动检测)
+
+    类型参数:
+      id - 按用户ID查询
+      name - 按用户名查询
+      不指定 - 自动检测（纯数字视为ID，其他视为用户名）
+  info: |
+    👤 {username} ({user_id})
+    🌐 {country_code} | 📈 全球排名: #{global_rank} | 📈 国内排名: #{country_rank}
+    🎮 模式: {mode} | 🎯 PP: {pp} | 🏆 等级: {level}
+    📈 准确率: {accuracy}% | プレイ回数: {play_count}
+    🔗 个人主页: https://osu.ppy.sh/users/{user_id}
+  statistics: |
+    📊 统计数据
+    SS/SSH: {ss_ssh_count} | S/SH: {s_sh_count} | A: {a_count}
+    总分: {total_score} | Ranked分: {ranked_score}
+    总Hits: {total_hits} | 最大连击: {max_combo}
+  
+  # 格式化用户信息的模板
+  format:
+    username: "👤 用户名: {username}"
+    user_id: "🆔 用户ID: {id}"
+    country: "🌍 国家: {country_code}"
+    statistics_header: "\n📊 统计数据:"
+    pp: "  💎 PP: {pp}"
+    global_rank: "  🌐 全球排名: #{rank}"
+    country_rank: "  🏆 国家排名: #{rank}"
+    accuracy: "  🎯 准确率: {accuracy}%"
+    play_count: "  🎮 游戏次数: {count}"
+    ranked_score: "  📈 Ranked 分数: {score}"
+    total_score: "  💯 总分数: {score}"
+    max_combo: "  🔗 最大连击: {combo}"
+    status_online: "\n🟢 在线"
+    status_offline: "\n🔴 离线"
+    supporter: "💖 Supporter"
+
+# 谱面命令相关信息
+beatmap:
+  map_usage: |
+    ❌ 请提供谱面ID
+    用法: /osu map <谱面ID>
+    示例: /osu map 129891
+  
+  mapset_usage: |
+    ❌ 请提供谱面集ID
+    用法: /osu mapset <谱面集ID>
+    示例: /osu mapset 41823
+  info: |
+    🎵 {title}
+    🧑‍🎨 Artist: {artist} | 谱师: {creator}
+    🆔 谱面ID: {beatmap_id} | 谱面集ID: {beatmapset_id}
+    ⭐ 星数: {difficulty_rating} | BPM: {bpm}
+    🕒 时长: {total_length}s | Drain时长: {hit_length}s
+    CS: {cs} | AR: {ar} | OD: {od} | HP: {hp}
+    ✅ 状态: {status} | 💔 Fail次数: {fail_count} | ▶️ Play次数: {play_count}
+    🔗 谱面链接: https://osu.ppy.sh/b/{beatmap_id}
+  
+  # 格式化谱面信息的模板
+  format:
+    version: "🎵 谱面: {version}"
+    beatmap_id: "🆔 谱面ID: {id}"
+    beatmapset_id: "📦 谱面集ID: {beatmapset_id}"
+    difficulty: "⭐ 难度: {rating}★"
+    mode: "🎮 模式: {mode}"
+    status: "📊 状态: {status}"
+    bpm: "🎵 BPM: {bpm}"
+    ar: "👁️ AR: {ar}"
+    cs: "⭕ CS: {cs}"
+    hp: "💧 HP: {hp}"
+    objects_header: "\n🎯 物件:"
+    circles: "  ⭕ Circles: {count}"
+    sliders: "  📏 Sliders: {count}"
+    spinners: "  🌀 Spinners: {count}"
+    duration: "⏱️ 时长: {time}"
+    playcount: "🎮 游玩次数: {count}"
+    passcount: "✅ 通过次数: {count}"
+  
+  # 格式化谱面集信息的模板
+  mapset_format:
+    title: "🎵 {title}"
+    artist: "👤 艺术家: {artist}"
+    creator: "🎨 谱师: {creator}"
+    id: "🆔 谱面集ID: {id}"
+    status: "📊 状态: {status}"
+    play_count: "🎮 游玩次数: {count}"
+    favourite_count: "❤️ 收藏数: {count}"
+    beatmaps_header: "\n📝 包含谱面 ({total}个):"
+    beatmap_item: "  • {version} [{rating}★]"
+    beatmaps_more: "  ... 还有 {remaining} 个谱面"
+
+# 好友列表相关信息
+friend:
+  empty: |
+    👥 您的好友列表为空
+    可以在 OSU 官网添加好友后再查看
+  
+  overview: |
+    👥 好友列表 (共 {total} 个)
+    🤝 互相关注: {mutual} 个
+    👁️ 单向关注: {one_way} 个
+    正在逐个发送好友信息...
+  
+  overview_simple: |
+    👥 好友列表 (共 {total} 个)
+    正在逐个发送好友信息...
+  
+  error: "❌ 获取好友列表失败: {error}"
+
+# 通用提示信息
+common:
+  loading: "🔄 正在获取{type}信息..."
+  querying: "🔄 正在查询{target}的信息..."
+  processing: "🔄 正在处理授权信息..."
+  param_error: "❌ 参数错误: {error}"
+  error_generic: |
+    ❌ {operation}失败: {error}
+    请稍后重试或联系管理员
+
+  error_with_retry: |
+    ❌ {operation}失败: {error}
+    请稍后重试或使用 /osu link 重新认证
+
+  invalid_id: |
+    ❌ 无效的{type}ID: {value}
+    {type}ID必须是数字
+
+  invalid_type: |
+    ❌ 无效的查询类型
+    支持的类型: {types}
+    或者不指定类型进行自动检测
+
+  cancel: "❌ 操作已取消"
+  
+update:
+  uploading: "🔄 正在上传您的 {mode} 模式成绩到 OSU!track..."
+  success: |
+    ✅ 成功上传成绩到 OSU!track！
+    🎮 用户: {username}
+    🎯 模式: {mode}
+    🆕 新增高分: {new_hs_count}
+    📊 统计变化:
+      PP: {pp_change}
+      排名: {rank_change}
+      国家排名: {country_rank_change}
+      准确率: {accuracy_change}
+  param_error: "❌ 参数错误: {error}"
+
+# ... 其他部分 ...
+callback:
+  invalid_url: |
+    ❌ 无效的回调 URL，请确保 URL 中包含授权码 (code=xxxxx)
+    请重新发送完整的回调 URL
+  
+  no_code: |
+    ❌ 无法从 URL 中提取授权码，请重新发送完整的回调 URL
+  
+  state_mismatch: |
+    ❌ 授权状态验证失败，请重新开始关联流程
+  
+  get_user_failed: |
+    ❌ 获取用户信息失败，请重试
+  
+  link_failed: |
+    ❌ 账号关联失败
+    平台 ID {platform_id} 可能已经关联到其他 OSU 账号
+  
+  timeout: |
+    ⏰ 授权超时（5分钟），请重新使用 /osu link 开始关联流程

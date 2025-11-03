@@ -1,5 +1,6 @@
 name: osu # 这是你的插件的唯一识别名。
 desc: 基于osu!track与osu!api的osu!插件 # 插件简短描述
-version: v0.2.1 # 插件版本号。格式：v1.1.1 或者 v1.1
+version: v0.2.2 # 插件版本号。格式：v1.1.1 或者 v1.1
 author: gameswu # 作者
 repo: https://github.com/gameswu/astrbot_plugin_osutrack # 插件的仓库地址
+display_name: osu!

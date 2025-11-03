@@ -5,9 +5,19 @@ from astrbot.api.util import session_waiter, SessionController
 import astrbot.api.message_components as Comp
 
 import urllib.parse
-import re
 import asyncio
+import datetime
+from datetime import timedelta
+from io import BytesIO
+from typing import List, Tuple
 
+import matplotlib
+matplotlib.use('Agg')  # 使用非交互式后端
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.font_manager import FontProperties
+
+from .utils import load_help_data, get_info
 from .client.oauth_client import OsuOAuthClient
 from .client.link_account import LinkAccountManager
 from .client.token_manager import TokenManager
@@ -16,9 +26,9 @@ from .client.osutrack_client import OsuTrackClient
 from .osuapi.enumtype import Scopes, OsuModes
 from .osuapi.trans import convert_osu_mode_to_track_mode, validate_osu_mode
 from .osutrackapi.enums import GameMode
-from .help_info import HelpCommandInfo
+from .osutrackapi import StatsUpdate, RecordedScore
 
-@register("osu","gameswu","基于osu!track与osu!api的osu!插件","0.2.1","https://github.com/gameswu/astrbot_plugin_osutrack")
+@register("osu","gameswu","基于osu!track与osu!api的osu!插件","0.2.2","https://github.com/gameswu/astrbot_plugin_osutrack")
 class OsuTrackPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -32,64 +42,43 @@ class OsuTrackPlugin(Star):
         self.client_id = config.get("client_id")
         self.client_secret = config.get("client_secret") 
         self.redirect_uri = config.get("redirect_uri", "http://localhost:7210/")
+        
+        # 加载帮助信息
+        self.help_data = load_help_data()
 
     async def initialize(self):
         pass
-
-    async def _check_user_authentication(self, event: AstrMessageEvent, require_scopes: list[Scopes] = None) -> tuple[bool, str, str]:
-        """
-        检查用户认证状态
-        
-        Args:
-            event: 消息事件
-            require_scopes: 需要的权限范围列表，如 [Scopes.PUBLIC] 或 [Scopes.IDENTIFY]
-            
-        Returns:
-            tuple[bool, str, str]: (是否通过检查, 平台ID, OSU用户ID)
-                                   如果检查失败，会自动发送错误消息
-        """
-        platform_id = event.get_sender_id()
-        
-        # 检查是否已关联
-        existing_osu_id = self.link_account_manager.get_osu_id_by_platform(platform_id)
-        if not existing_osu_id:
-            await event.send(MessageChain([Comp.Plain(
-                "❌ 您的账号尚未关联任何 OSU 账号\n"
-                "使用 /osu link 开始关联流程"
-            )]))
-            return False, platform_id, ""
-        
-        # 检查是否有有效的 token
-        if not self.osu_client.has_valid_token(platform_id):
-            await event.send(MessageChain([Comp.Plain(
-                "❌ 您的 OSU 认证已过期\n"
-                "请使用 /osu link 重新认证"
-            )]))
-            return False, platform_id, existing_osu_id
-        
-        # 如果需要特定权限，进行权限检查
-        if require_scopes:
-            missing_scopes = []
-            for scope in require_scopes:
-                scope_value = scope.value if isinstance(scope, Scopes) else str(scope)
-                if not self.osu_client.check_scope_permission(platform_id, scope_value):
-                    missing_scopes.append(scope_value)
-            
-            if missing_scopes:
-                scopes_text = ", ".join(missing_scopes)
-                await event.send(MessageChain([Comp.Plain(
-                    f"❌ 权限不足，缺少以下权限: {scopes_text}\n"
-                    "请使用 /osu link 重新认证以获取所需权限"
-                )]))
-                return False, platform_id, existing_osu_id
-        
-        return True, platform_id, existing_osu_id
 
     @filter.command_group("osu")
     async def osu(self, event: AstrMessageEvent):
         pass
 
-    @osu.command("link")
+    @osu.command("help") #@audit-ok
+    async def help_command(self, event: AstrMessageEvent, command: str = None):
+        """
+        显示 OSU 插件帮助信息
+        """
+        if not self.help_data:
+            await event.send(MessageChain([Comp.Plain("❌ 帮助信息加载失败，请联系管理员。")]))
+            return
+
+        if command:
+            # 获取特定命令的帮助
+            command_key = command.upper()
+            help_text = self.help_data.get('commands', {}).get(command_key)
+            if help_text:
+                # 添加标题
+                final_text = f"OSU! 插件帮助 - /osu {command.lower()}\n\n{help_text}"
+            else:
+                final_text = f"❌ 未找到命令 '{command}' 的帮助信息。\n\n"
+                final_text += self.help_data.get('general', '帮助信息不可用。')
+        else:
+            # 获取通用帮助
+            final_text = self.help_data.get('general', '帮助信息不可用。')
+        
+        await event.send(MessageChain([Comp.Plain(final_text)]))
+
+    @osu.command("link") #@audit-ok
     async def link_account(self, event: AstrMessageEvent):
         """
         关联 OSU 账号和平台 ID
@@ -100,16 +89,13 @@ class OsuTrackPlugin(Star):
         existing_osu_id = self.link_account_manager.get_osu_id_by_platform(platform_id)
         if existing_osu_id:
             await event.send(MessageChain([Comp.Plain(
-                f"❌ 您的账号已经关联了 OSU 账号 ID: {existing_osu_id}\n"
-                f"如需重新关联，请先使用 /osu unlink 解除关联。"
+                get_info("link.already_linked", osu_id=existing_osu_id)
             )]))
             return
         
         # 检查配置
         if not self.client_id or not self.client_secret:
-            await event.send(MessageChain([Comp.Plain(
-                "❌ OSU OAuth 配置不完整，请联系管理员配置 osu_client_id 和 osu_client_secret。"
-            )]))
+            await event.send(MessageChain([Comp.Plain(get_info("link.config_incomplete"))]))
             return
         
         try:
@@ -125,18 +111,9 @@ class OsuTrackPlugin(Star):
             auth_url = oauth_client.get_authorization_url(state)
             
             # 发送授权链接
-            auth_message = (
-                "🎮 OSU 账号关联流程\n\n"
-                "请按以下步骤操作：\n"
-                "1️⃣ 点击下方链接进行 OSU 授权\n"
-                f"🔗 {auth_url}\n\n"
-                "2️⃣ 完成授权后，浏览器会跳转到一个新页面\n"
-                "3️⃣ 将浏览器地址栏的完整 URL 复制并发送给我\n"
-                "   （URL 包含类似 ?code=xxxxx 的授权码）\n\n"
-                "⏰ 此操作将在 5 分钟后超时"
-            )
-            
-            await event.send(MessageChain([Comp.Plain(auth_message)]))
+            await event.send(MessageChain([Comp.Plain(
+                get_info("link.auth_flow", auth_url=auth_url)
+            )]))
             
             # 等待用户输入授权回调 URL
             @session_waiter(timeout=300)  # 5分钟超时
@@ -146,10 +123,7 @@ class OsuTrackPlugin(Star):
                     
                     # 验证并解析回调 URL
                     if "code=" not in callback_url:
-                        await event.send(MessageChain([Comp.Plain(
-                            "❌ 无效的回调 URL，请确保 URL 中包含授权码 (code=xxxxx)\n"
-                            "请重新发送完整的回调 URL"
-                        )]))
+                        await event.send(MessageChain([Comp.Plain(get_info("callback.invalid_url"))]))
                         controller.keep(60)  # 继续等待 60 秒
                         return
                     
@@ -161,22 +135,18 @@ class OsuTrackPlugin(Star):
                     callback_state = query_params.get('state', [None])[0]
                     
                     if not auth_code:
-                        await event.send(MessageChain([Comp.Plain(
-                            "❌ 无法从 URL 中提取授权码，请重新发送完整的回调 URL"
-                        )]))
+                        await event.send(MessageChain([Comp.Plain(get_info("callback.no_code"))]))
                         controller.keep(60)
                         return
                     
                     # 验证 state 参数（可选的安全检查）
                     if callback_state and not callback_state.startswith(platform_id):
-                        await event.send(MessageChain([Comp.Plain(
-                            "❌ 授权状态验证失败，请重新开始关联流程"
-                        )]))
+                        await event.send(MessageChain([Comp.Plain(get_info("callback.state_mismatch"))]))
                         controller.stop()
                         return
                     
                     # 显示处理中状态
-                    await event.send(MessageChain([Comp.Plain("🔄 正在处理授权信息...")]))
+                    await event.send(MessageChain([Comp.Plain(get_info("common.processing"))]))
                     
                     # 交换授权码获取访问令牌
                     token_data = await oauth_client.exchange_code_for_token(auth_code)
@@ -187,9 +157,7 @@ class OsuTrackPlugin(Star):
                     # 获取用户信息
                     user_info = await oauth_client.get_user_info(platform_id)
                     if not user_info:
-                        await event.send(MessageChain([Comp.Plain(
-                            "❌ 获取用户信息失败，请重试"
-                        )]))
+                        await event.send(MessageChain([Comp.Plain(get_info("callback.get_user_failed"))]))
                         controller.stop()
                         return
                     
@@ -200,18 +168,14 @@ class OsuTrackPlugin(Star):
                     success = self.link_account_manager.link_account(osu_user_id, platform_id)
                     if success:
                         await event.send(MessageChain([Comp.Plain(
-                            f"✅ 账号关联成功！\n"
-                            f"🎮 OSU 用户: {username} (ID: {osu_user_id})\n"
-                            f"🆔 平台 ID: {platform_id}\n"
-                            f"🎯 现在可以使用 OSU 相关功能了！"
+                            get_info("link.success", username=username, osu_user_id=osu_user_id, platform_id=platform_id)
                         )]))
                         logger.info(f"成功关联 OSU 账号: {username}({osu_user_id}) <-> {platform_id}")
                     else:
                         # 关联失败，清理 token
                         oauth_client.remove_token(platform_id)
                         await event.send(MessageChain([Comp.Plain(
-                            f"❌ 账号关联失败\n"
-                            f"平台 ID {platform_id} 可能已经关联到其他 OSU 账号"
+                            get_info("callback.link_failed", platform_id=platform_id)
                         )]))
                     
                     controller.stop()
@@ -219,8 +183,7 @@ class OsuTrackPlugin(Star):
                 except Exception as e:
                     logger.error(f"处理 OSU 授权回调失败: {e}")
                     await event.send(MessageChain([Comp.Plain(
-                        f"❌ 授权处理失败: {str(e)}\n"
-                        f"请重新使用 /osu link 开始关联流程"
+                        get_info("common.error_generic", operation="授权", error=str(e))
                     )]))
                     controller.stop()
             
@@ -228,18 +191,15 @@ class OsuTrackPlugin(Star):
             try:
                 await handle_auth_callback(event)
             except TimeoutError:
-                await event.send(MessageChain([Comp.Plain(
-                    "⏰ 授权超时（5分钟），请重新使用 /osu link 开始关联流程"
-                )]))
+                await event.send(MessageChain([Comp.Plain(get_info("callback.timeout"))]))
             
         except Exception as e:
             logger.error(f"OSU 账号关联过程中发生错误: {e}")
             await event.send(MessageChain([Comp.Plain(
-                f"❌ 关联过程中发生错误: {str(e)}\n"
-                f"请稍后重试或联系管理员"
+                get_info("common.error_generic", operation="关联", error=str(e))
             )]))
 
-    @osu.command("unlink")
+    @osu.command("unlink") #@audit-ok
     async def unlink_account(self, event: AstrMessageEvent):
         """
         解除平台 ID 的关联
@@ -249,9 +209,7 @@ class OsuTrackPlugin(Star):
         # 检查是否已关联
         existing_osu_id = self.link_account_manager.get_osu_id_by_platform(platform_id)
         if not existing_osu_id:
-            await event.send(MessageChain([Comp.Plain(
-                "❌ 您的账号尚未关联任何 OSU 账号"
-            )]))
+            await event.send(MessageChain([Comp.Plain(get_info("unlink.not_linked"))]))
             return
         
         try:
@@ -267,21 +225,20 @@ class OsuTrackPlugin(Star):
                 oauth_client.remove_token(platform_id)
                 
                 await event.send(MessageChain([Comp.Plain(
-                    f"✅ 成功解除关联！\n"
-                    f"已解除与 OSU 账号 ID: {existing_osu_id} 的关联"
+                    get_info("unlink.success", osu_id=existing_osu_id)
                 )]))
                 logger.info(f"解除 OSU 账号关联: {existing_osu_id} <-> {platform_id}")
             else:
                 await event.send(MessageChain([Comp.Plain(
-                    "❌ 解除关联失败，请稍后重试"
+                    get_info("common.error_generic", operation="解除关联", error="未知错误")
                 )]))
         except Exception as e:
             logger.error(f"解除 OSU 账号关联失败: {e}")
             await event.send(MessageChain([Comp.Plain(
-                f"❌ 解除关联过程中发生错误: {str(e)}"
+                get_info("common.error_generic", operation="解除关联", error=str(e))
             )]))
 
-    @osu.command("me")
+    @osu.command("me") #@audit-ok
     async def get_me(self, event: AstrMessageEvent, mode: str = None):
         """
         获取当前关联账号的用户信息
@@ -292,7 +249,7 @@ class OsuTrackPlugin(Star):
             return
         
         try:
-            await event.send(MessageChain([Comp.Plain("🔄 正在获取您的 OSU 信息...")]))
+            await event.send(MessageChain([Comp.Plain(get_info("common.loading", type="个人"))]))
             
             # 获取用户信息
             user_info = await self.osu_client.get_own_data(platform_id, mode)
@@ -311,11 +268,10 @@ class OsuTrackPlugin(Star):
         except Exception as e:
             logger.error(f"获取个人 OSU 信息失败: {e}")
             await event.send(MessageChain([Comp.Plain(
-                f"❌ 获取个人信息失败: {str(e)}\n"
-                "请稍后重试或使用 /osu link 重新认证"
+                get_info("common.error_generic", operation="获取个人信息", error=str(e))
             )]))
 
-    @osu.command("user")
+    @osu.command("user") #@audit-ok
     async def get_user(self, event: AstrMessageEvent, user: str, mode: str = None, type: str = None):
         """
         查询指定用户的信息
@@ -326,18 +282,7 @@ class OsuTrackPlugin(Star):
             type: 查询类型 (id, name) - 指定输入是用户ID还是用户名
         """
         if not user:
-            await event.send(MessageChain([Comp.Plain(
-                "❌ 请提供用户名或用户ID\n"
-                "用法: /osu user <用户名或ID> [模式] [类型]\n"
-                "示例: \n"
-                "  /osu user peppy osu name\n"
-                "  /osu user 124493 taiko id\n"
-                "  /osu user peppy (自动检测)\n\n"
-                "类型参数:\n"
-                "  id - 按用户ID查询\n"
-                "  name - 按用户名查询\n"
-                "  不指定 - 自动检测（纯数字视为ID，其他视为用户名）"
-            )]))
+            await event.send(MessageChain([Comp.Plain(get_info("user.usage"))]))
             return
         
         # 检查用户认证状态（不需要 identify 权限，只需要 public 权限）
@@ -348,14 +293,12 @@ class OsuTrackPlugin(Star):
         # 验证 type 参数
         if type and type not in ['id', 'name']:
             await event.send(MessageChain([Comp.Plain(
-                "❌ 无效的查询类型\n"
-                "支持的类型: id, name\n"
-                "或者不指定类型进行自动检测"
+                get_info("common.error_generic", operation="查询类型", error="无效的查询类型")
             )]))
             return
         
         try:
-            await event.send(MessageChain([Comp.Plain(f"🔄 正在查询用户 {user} 的信息...")]))
+            await event.send(MessageChain([Comp.Plain(get_info("common.querying_user", user=user))]))
             
             # 根据 type 参数处理用户输入
             processed_user = user
@@ -365,7 +308,7 @@ class OsuTrackPlugin(Star):
                     processed_user = int(user)
                 else:
                     await event.send(MessageChain([Comp.Plain(
-                        f"❌ 指定为 ID 查询，但输入 '{user}' 不是有效的数字ID"
+                        get_info("common.error_generic", operation="查询用户", error=f"指定为 ID 查询，但输入 '{user}' 不是有效的数字ID")
                     )]))
                     return
             elif type == 'name':
@@ -396,11 +339,10 @@ class OsuTrackPlugin(Star):
         except Exception as e:
             logger.error(f"查询用户 {user} 信息失败: {e}")
             await event.send(MessageChain([Comp.Plain(
-                f"❌ 查询用户 {user} 失败: {str(e)}\n"
-                "请检查用户名是否正确，或稍后重试"
+                get_info("common.error_generic", operation="查询用户", error=str(e))
             )]))
 
-    @osu.command("users")
+    @osu.command("users") #@audit-ok
     async def get_users(self, event: AstrMessageEvent):
         """
         批量查询多个用户的信息
@@ -412,15 +354,7 @@ class OsuTrackPlugin(Star):
             return
         
         # 发送提示信息
-        prompt_message = (
-            "📊 批量用户查询\n\n"
-            "请在接下来的消息中发送要查询的用户ID，用空格分隔：\n"
-            "📝 示例: 124493 3 2 53378\n"
-            "📝 最多支持 50 个用户ID\n"
-            "⏰ 请在 5 分钟内发送，超时将取消查询"
-        )
-        
-        await event.send(MessageChain([Comp.Plain(prompt_message)]))
+        await event.send(MessageChain([Comp.Plain(get_info("batch_query.users_prompt"))]))
         
         # 等待用户输入用户ID列表
         @session_waiter(timeout=300)  # 5分钟超时
@@ -430,7 +364,7 @@ class OsuTrackPlugin(Star):
                 
                 # 检查是否取消
                 if user_input.lower() in ['取消', 'cancel', '退出', 'quit']:
-                    await event.send(MessageChain([Comp.Plain("❌ 已取消批量查询")]))
+                    await event.send(MessageChain([Comp.Plain(get_info("common.cancel", type="批量查询"))]))
                     controller.stop()
                     return
                 
@@ -438,8 +372,7 @@ class OsuTrackPlugin(Star):
                 user_ids = user_input.split()
                 if not user_ids:
                     await event.send(MessageChain([Comp.Plain(
-                        "❌ 请提供至少一个用户ID\n"
-                        "请重新发送用户ID，用空格分隔"
+                        get_info("common.error_generic", operation="批量查询", error="请提供至少一个用户ID")
                     )]))
                     controller.keep(60)  # 继续等待 60 秒
                     return
@@ -447,9 +380,7 @@ class OsuTrackPlugin(Star):
                 # 检查数量限制
                 if len(user_ids) > 50:
                     await event.send(MessageChain([Comp.Plain(
-                        f"❌ 最多支持同时查询 50 个用户\n"
-                        f"您提供了 {len(user_ids)} 个用户ID\n"
-                        "请重新发送，减少用户ID数量"
+                        get_info("common.error_generic", operation="批量查询", error=f"最多支持同时查询 50 个用户\n您提供了 {len(user_ids)} 个用户ID\n请重新发送，减少用户ID数量")
                     )]))
                     controller.keep(60)
                     return
@@ -470,34 +401,31 @@ class OsuTrackPlugin(Star):
                 
                 # 如果有无效ID，提示用户
                 if invalid_ids:
-                    await event.send(MessageChain([Comp.Plain(
-                        f"⚠️ 发现无效的用户ID: {', '.join(invalid_ids)}\n"
-                        f"将继续查询其余 {len(processed_ids)} 个有效ID"
+                    await event.send(MessageChain([Comp.Plain( 
+                        get_info("common.warning_generic", operation="批量查询", warning=f"发现无效的用户ID: {', '.join(invalid_ids)}\n将继续查询其余 {len(processed_ids)} 个有效ID")
                     )]))
                 
                 if not processed_ids:
                     await event.send(MessageChain([Comp.Plain(
-                        "❌ 没有找到有效的用户ID\n"
-                        "请重新发送正确格式的用户ID"
+                        get_info("common.error_generic", operation="批量查询", error="没有找到有效的用户ID")
                     )]))
                     controller.keep(60)
                     return
                 
-                await event.send(MessageChain([Comp.Plain(f"🔄 正在查询 {len(processed_ids)} 个用户的信息...")]))
+                await event.send(MessageChain([Comp.Plain(get_info("common.querying", count=len(processed_ids), type="用户"))]))
                 
                 # 批量获取用户信息
                 users_info = await self.osu_client.get_users(platform_id, processed_ids)
                 
                 if not users_info:
                     await event.send(MessageChain([Comp.Plain(
-                        "❌ 没有找到任何用户信息\n"
-                        "请检查用户ID是否正确"
+                        get_info("common.error_generic", operation="查询用户", error="没有找到任何用户信息\n请检查用户ID是否正确")
                     )]))
                     controller.stop()
                     return
                 
                 # 发送概览信息
-                await event.send(MessageChain([Comp.Plain(f"📊 找到 {len(users_info)} 个用户，正在逐个发送详细信息...")]))
+                await event.send(MessageChain([Comp.Plain(get_info("common.querying", count=len(users_info), type="用户"))]))
                 
                 # 为每个用户单独发送信息
                 for i, user_info in enumerate(users_info, 1):
@@ -524,9 +452,8 @@ class OsuTrackPlugin(Star):
                 
             except Exception as e:
                 logger.error(f"批量查询用户信息失败: {e}")
-                await event.send(MessageChain([Comp.Plain(
-                    f"❌ 批量查询失败: {str(e)}\n"
-                    "请检查用户ID是否正确，或稍后重试"
+                await event.send(MessageChain([Comp.Plain( 
+                    get_info("common.error_generic", operation="批量查询", error=str(e))
                 )]))
                 controller.stop()
         
@@ -535,11 +462,10 @@ class OsuTrackPlugin(Star):
             await handle_user_ids_input(event)
         except TimeoutError:
             await event.send(MessageChain([Comp.Plain(
-                "⏰ 输入超时（5分钟），批量查询已取消\n"
-                "请重新使用 /osu users 开始查询"
+                get_info("batch_query.timeout", command="users")
             )]))
 
-    @osu.command("update")
+    @osu.command("update") #@audit-ok
     async def update(self, event: AstrMessageEvent, mode: str = None):
         """
         上传用户成绩至 OSU!track
@@ -558,52 +484,36 @@ class OsuTrackPlugin(Star):
             
             # 转换为 OSU Track 模式
             track_mode = convert_osu_mode_to_track_mode(validated_mode)
-            
-            await event.send(MessageChain([Comp.Plain(f"🔄 正在上传您的 {validated_mode.upper()} 模式成绩到 OSU!track...")]))
-            
+
+            await event.send(MessageChain([Comp.Plain(get_info("common.uploading", mode=validated_mode.upper()))]))
+
             # 调用 OSU Track API 更新用户数据
             update_response = await self.osu_track_client.update_user(osu_id, track_mode)
             
-            # 构建成功消息
-            success_message = [
-                "✅ 成功上传成绩到 OSU!track！",
-                f"🎮 用户: {update_response.username}",
-                f"🎯 模式: {validated_mode.upper()}",
-            ]
+            # 准备格式化参数
+            stats = update_response.update
+            format_params = {
+                "username": update_response.username,
+                "mode": validated_mode.upper(),
+                "new_hs_count": len(update_response.newhs) if update_response.newhs else 0,
+                "pp_change": f"{stats.pp:+.2f}" if stats and stats.pp is not None else "-",
+                "rank_change": f"{stats.rank:+d}" if stats and stats.rank is not None else "-",
+                "country_rank_change": f"{stats.country_rank:+d}" if stats and stats.country_rank is not None else "-",
+                "accuracy_change": f"{stats.accuracy:+.2f}%" if stats and stats.accuracy is not None else "-",
+            }
             
-            # 如果有新的统计信息
-            if update_response.newhs:
-                success_message.append(f"🆕 新增 {len(update_response.newhs)} 个高分记录")
-            
-            # 如果有统计变化
-            if update_response.update:
-                stats = update_response.update
-                changes = []
-                
-                if stats.pp is not None:
-                    changes.append(f"PP: {stats.pp:+.2f}")
-                if stats.rank is not None:
-                    changes.append(f"排名: {stats.rank:+d}")
-                if stats.country_rank is not None:
-                    changes.append(f"国家排名: {stats.country_rank:+d}")
-                if stats.accuracy is not None:
-                    changes.append(f"准确率: {stats.accuracy:+.2f}%")
-                
-                if changes:
-                    success_message.append(f"📊 统计变化: {', '.join(changes)}")
-            
-            await event.send(MessageChain([Comp.Plain("\n".join(success_message))]))
+            # 发送成功消息
+            await event.send(MessageChain([Comp.Plain(get_info("update.success", **format_params))]))
             
         except ValueError as e:
-            await event.send(MessageChain([Comp.Plain(f"❌ 参数错误: {str(e)}")]))
+            await event.send(MessageChain([Comp.Plain(get_info("update.param_error", error=str(e)))]))
         except Exception as e:
             logger.error(f"上传成绩到 OSU!track 失败: {e}")
             await event.send(MessageChain([Comp.Plain(
-                f"❌ 上传成绩失败: {str(e)}\n"
-                "请稍后重试或检查网络连接"
+                get_info("common.error_generic", operation="上传成绩", error=str(e))
             )]))
 
-    @osu.command("map")
+    @osu.command("map") #@audit-ok
     async def get_beatmap(self, event: AstrMessageEvent, beatmap_id: str):
         """
         查询指定谱面的详细信息
@@ -612,19 +522,12 @@ class OsuTrackPlugin(Star):
             beatmap_id: 谱面ID
         """
         if not beatmap_id:
-            await event.send(MessageChain([Comp.Plain(
-                "❌ 请提供谱面ID\n"
-                "用法: /osu map <谱面ID>\n"
-                "示例: /osu map 129891"
-            )]))
+            await event.send(MessageChain([Comp.Plain(get_info("beatmap.map_usage"))]))
             return
         
         # 验证谱面ID格式
         if not beatmap_id.isdigit():
-            await event.send(MessageChain([Comp.Plain(
-                f"❌ 无效的谱面ID: {beatmap_id}\n"
-                "谱面ID必须是数字"
-            )]))
+            await event.send(MessageChain([Comp.Plain(get_info("beatmap.invalid_id", id=beatmap_id))]))
             return
         
         # 检查用户认证状态（需要 public 权限）
@@ -633,7 +536,7 @@ class OsuTrackPlugin(Star):
             return
         
         try:
-            await event.send(MessageChain([Comp.Plain(f"🔄 正在查询谱面 {beatmap_id} 的信息...")]))
+            await event.send(MessageChain([Comp.Plain(get_info("common.querying_beatmap", id=beatmap_id))]))
             
             # 获取谱面信息
             beatmap_info = await self.osu_client.get_beatmap(platform_id, int(beatmap_id))
@@ -645,12 +548,11 @@ class OsuTrackPlugin(Star):
             
         except Exception as e:
             logger.error(f"查询谱面 {beatmap_id} 信息失败: {e}")
-            await event.send(MessageChain([Comp.Plain(
-                f"❌ 查询谱面 {beatmap_id} 失败: {str(e)}\n"
-                "请检查谱面ID是否正确，或稍后重试"
+            await event.send(MessageChain([Comp.Plain( 
+                get_info("common.error_generic", operation="查询谱面", error=str(e))
             )]))
 
-    @osu.command("mapset")
+    @osu.command("mapset") #@audit-ok
     async def get_beatmapset(self, event: AstrMessageEvent, mapset_id: str):
         """
         查询指定谱面集的详细信息
@@ -659,19 +561,12 @@ class OsuTrackPlugin(Star):
             mapset_id: 谱面集ID
         """
         if not mapset_id:
-            await event.send(MessageChain([Comp.Plain(
-                "❌ 请提供谱面集ID\n"
-                "用法: /osu mapset <谱面集ID>\n"
-                "示例: /osu mapset 41823"
-            )]))
+            await event.send(MessageChain([Comp.Plain(get_info("beatmap.mapset_usage"))]))
             return
         
         # 验证谱面集ID格式
         if not mapset_id.isdigit():
-            await event.send(MessageChain([Comp.Plain(
-                f"❌ 无效的谱面集ID: {mapset_id}\n"
-                "谱面集ID必须是数字"
-            )]))
+            await event.send(MessageChain([Comp.Plain(get_info("beatmap.invalid_mapset_id", id=mapset_id))]))
             return
         
         # 检查用户认证状态（需要 public 权限）
@@ -680,7 +575,7 @@ class OsuTrackPlugin(Star):
             return
         
         try:
-            await event.send(MessageChain([Comp.Plain(f"🔄 正在查询谱面集 {mapset_id} 的信息...")]))
+            await event.send(MessageChain([Comp.Plain(get_info("common.querying_beatmapset", id=mapset_id))]))
             
             # 获取谱面集信息
             beatmapset_info = await self.osu_client.get_beatmapset(platform_id, int(mapset_id))
@@ -703,7 +598,7 @@ class OsuTrackPlugin(Star):
                 "请检查谱面集ID是否正确，或稍后重试"
             )]))
 
-    @osu.command("mapsets")
+    @osu.command("mapsets") #@audit-ok
     async def get_beatmapsets(self, event: AstrMessageEvent):
         """
         批量查询多个谱面集的信息
@@ -715,13 +610,7 @@ class OsuTrackPlugin(Star):
             return
         
         # 发送提示信息
-        prompt_message = (
-            "📊 批量谱面集查询\n\n"
-            "请在接下来的消息中发送要查询的谱面集ID，用空格分隔：\n"
-            "📝 示例: 41823 129891 55496 162019\n"
-            "📝 最多支持 20 个谱面集ID\n"
-            "⏰ 请在 5 分钟内发送，超时将取消查询"
-        )
+        prompt_message = get_info("batch_query.mapsets_prompt")
         
         await event.send(MessageChain([Comp.Plain(prompt_message)]))
         
@@ -733,27 +622,20 @@ class OsuTrackPlugin(Star):
                 
                 # 检查是否取消
                 if user_input.lower() in ['取消', 'cancel', '退出', 'quit']:
-                    await event.send(MessageChain([Comp.Plain("❌ 已取消批量查询")]))
+                    await event.send(MessageChain([Comp.Plain(get_info("common.cancel", type="批量查询"))]))
                     controller.stop()
                     return
                 
                 # 解析谱面集ID列表
                 mapset_ids = user_input.split()
                 if not mapset_ids:
-                    await event.send(MessageChain([Comp.Plain(
-                        "❌ 请提供至少一个谱面集ID\n"
-                        "请重新发送谱面集ID，用空格分隔"
-                    )]))
+                    await event.send(MessageChain([Comp.Plain(get_info("batch_query.no_ids", type="谱面集"))]))
                     controller.keep(60)  # 继续等待 60 秒
                     return
                 
                 # 检查数量限制
                 if len(mapset_ids) > 20:
-                    await event.send(MessageChain([Comp.Plain(
-                        f"❌ 最多支持同时查询 20 个谱面集\n"
-                        f"您提供了 {len(mapset_ids)} 个谱面集ID\n"
-                        "请重新发送，减少谱面集ID数量"
-                    )]))
+                    await event.send(MessageChain([Comp.Plain(get_info("batch_query.too_many", type="谱面集", count=len(mapset_ids), max=20))]))
                     controller.keep(60)
                     return
                 
@@ -769,20 +651,14 @@ class OsuTrackPlugin(Star):
                 
                 # 如果有无效ID，提示用户
                 if invalid_ids:
-                    await event.send(MessageChain([Comp.Plain(
-                        f"⚠️ 发现无效的谱面集ID: {', '.join(invalid_ids)}\n"
-                        f"将继续查询其余 {len(valid_ids)} 个有效ID"
-                    )]))
+                    await event.send(MessageChain([Comp.Plain(get_info("batch_query.invalid_ids", type="谱面集", ids=', '.join(invalid_ids), valid_count=len(valid_ids)))]))
                 
                 if not valid_ids:
-                    await event.send(MessageChain([Comp.Plain(
-                        "❌ 没有找到有效的谱面集ID\n"
-                        "请重新发送正确格式的谱面集ID（必须是数字）"
-                    )]))
+                    await event.send(MessageChain([Comp.Plain(get_info("batch_query.no_valid_ids", type="谱面集"))]))
                     controller.keep(60)
                     return
                 
-                await event.send(MessageChain([Comp.Plain(f"🔄 正在查询 {len(valid_ids)} 个谱面集的信息...")]))
+                await event.send(MessageChain([Comp.Plain(get_info("common.querying", count=len(valid_ids), type="谱面集"))]))
                 
                 # 逐个获取谱面集信息
                 successful_count = 0
@@ -838,12 +714,9 @@ class OsuTrackPlugin(Star):
         try:
             await handle_mapset_ids_input(event)
         except TimeoutError:
-            await event.send(MessageChain([Comp.Plain(
-                "⏰ 输入超时（5分钟），批量查询已取消\n"
-                "请重新使用 /osu mapsets 开始查询"
-            )]))
+            await event.send(MessageChain([Comp.Plain(get_info("batch_query.timeout", command="mapsets"))]))
 
-    @osu.command("friend")
+    @osu.command("friend") #@audit-ok
     async def get_friends(self, event: AstrMessageEvent):
         """
         获取好友列表
@@ -855,16 +728,13 @@ class OsuTrackPlugin(Star):
             return
         
         try:
-            await event.send(MessageChain([Comp.Plain("🔄 正在获取好友列表...")]))
+            await event.send(MessageChain([Comp.Plain(get_info("common.loading", type="好友列表"))]))
             
             # 获取好友列表
             friends = await self.osu_client.get_friends(platform_id)
             
             if not friends:
-                await event.send(MessageChain([Comp.Plain(
-                    "👥 您的好友列表为空\n"
-                    "可以在 OSU 官网添加好友后再查看"
-                )]))
+                await event.send(MessageChain([Comp.Plain(get_info("friend.empty"))]))
                 return
             
             # OSU API 的 /friends 端点返回的是用户信息列表，不是好友关系对象
@@ -887,16 +757,343 @@ class OsuTrackPlugin(Star):
             
         except Exception as e:
             logger.error(f"获取好友列表失败: {e}")
+            await event.send(MessageChain([Comp.Plain(get_info("friend.error", error=str(e)))]))
+
+    def _get_rank_color(self, rank: str) -> str:
+        """
+        根据评级返回对应的颜色
+        
+        Args:
+            rank: 评级 (XH, X, SH, S, A, B, C, D)
+            
+        Returns:
+            str: 颜色代码
+        """
+        rank_colors = {
+            'XH': '#FFD700',  # 金色 SS
+            'X': '#C0C0C0',   # 银色 SS
+            'SH': '#FFD700',  # 金色 S
+            'S': '#C0C0C0',   # 银色 S
+            'A': '#00FF00',   # 绿色
+            'B': '#4169E1',   # 蓝色
+            'C': '#FF00FF',   # 紫色
+            'D': '#FF0000',   # 红色
+            'F': '#808080'    # 灰色
+        }
+        return rank_colors.get(rank.upper(), '#808080')
+    
+    def _get_rank_marker(self, rank: str) -> str:
+        """
+        根据评级返回对应的标记样式
+        
+        Args:
+            rank: 评级
+            
+        Returns:
+            str: matplotlib 标记样式
+        """
+        rank_markers = {
+            'XH': '*',  # 星形
+            'X': '*',
+            'SH': 'D',  # 菱形
+            'S': 'D',
+            'A': 'o',   # 圆形
+            'B': 's',   # 方形
+            'C': '^',   # 三角形
+            'D': 'v',   # 倒三角
+            'F': 'x'    # 叉形
+        }
+        return rank_markers.get(rank.upper(), 'o')
+    
+    async def _generate_pp_chart(self, stats_history: List[StatsUpdate], 
+                                 hiscores: List[RecordedScore],
+                                 username: str, mode: str, days: int) -> BytesIO:
+        """
+        生成 PP 图表（包含 PP 变化曲线和成绩散点图）
+        
+        Args:
+            stats_history: 统计历史数据
+            hiscores: 高分记录数据
+            username: 用户名
+            mode: 游戏模式
+            days: 天数范围
+            
+        Returns:
+            BytesIO: 图表图片的字节流
+        """
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+        fig.suptitle(f'{username} - {mode.upper()} Mode PP Statistics (Last {days} Days)', 
+                    fontsize=16, fontweight='bold')
+        
+        # 绘制 PP 变化曲线
+        if stats_history:
+            timestamps = [datetime.datetime.fromisoformat(s.timestamp.replace('Z', '+00:00')) 
+                         for s in stats_history]
+            pp_values = [s.pp_raw for s in stats_history]
+            
+            ax1.plot(timestamps, pp_values, color='#FF66AA', linewidth=2, marker='o', 
+                    markersize=4, label='PP')
+            ax1.set_xlabel('Date', fontsize=12)
+            ax1.set_ylabel('PP', fontsize=12)
+            ax1.set_title('PP Over Time', fontsize=14, fontweight='bold')
+            ax1.grid(True, alpha=0.3)
+            ax1.legend()
+            
+            # 格式化 x 轴日期
+            ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+            ax1.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, days // 10)))
+            plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        # 绘制成绩散点图
+        if hiscores:
+            score_times = [datetime.datetime.fromisoformat(s.score_time.replace('Z', '+00:00')) 
+                          for s in hiscores]
+            score_pps = [s.pp for s in hiscores]
+            
+            # 按评级分组绘制
+            ranks = {}
+            for score in hiscores:
+                if score.rank not in ranks:
+                    ranks[score.rank] = {'times': [], 'pps': []}
+                ranks[score.rank]['times'].append(
+                    datetime.datetime.fromisoformat(score.score_time.replace('Z', '+00:00'))
+                )
+                ranks[score.rank]['pps'].append(score.pp)
+            
+            # 为每个评级绘制散点
+            for rank, data in ranks.items():
+                ax2.scatter(data['times'], data['pps'], 
+                           c=self._get_rank_color(rank),
+                           marker=self._get_rank_marker(rank),
+                           s=100, alpha=0.6, label=f'Rank {rank}',
+                           edgecolors='black', linewidths=0.5)
+            
+            ax2.set_xlabel('Date', fontsize=12)
+            ax2.set_ylabel('PP', fontsize=12)
+            ax2.set_title('Score Performance (PP by Rank)', fontsize=14, fontweight='bold')
+            ax2.grid(True, alpha=0.3)
+            ax2.legend(loc='upper left', fontsize=8, ncol=2)
+            
+            # 格式化 x 轴日期
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+            ax2.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, days // 10)))
+            plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        plt.tight_layout()
+        
+        # 保存到字节流
+        buf = BytesIO()
+        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        buf.seek(0)
+        plt.close(fig)
+        
+        return buf
+    
+    async def _generate_rank_chart(self, stats_history: List[StatsUpdate],
+                                   username: str, mode: str, days: int) -> BytesIO:
+        """
+        生成排名变化图表
+        
+        Args:
+            stats_history: 统计历史数据
+            username: 用户名
+            mode: 游戏模式
+            days: 天数范围
+            
+        Returns:
+            BytesIO: 图表图片的字节流
+        """
+        fig, ax = plt.subplots(figsize=(12, 6))
+        fig.suptitle(f'{username} - {mode.upper()} Mode Rank Statistics (Last {days} Days)', 
+                    fontsize=16, fontweight='bold')
+        
+        if stats_history:
+            timestamps = [datetime.datetime.fromisoformat(s.timestamp.replace('Z', '+00:00')) 
+                         for s in stats_history]
+            ranks = [s.pp_rank for s in stats_history]
+            
+            ax.plot(timestamps, ranks, color='#66B2FF', linewidth=2, marker='o', 
+                   markersize=4, label='Global Rank')
+            ax.set_xlabel('Date', fontsize=12)
+            ax.set_ylabel('Rank', fontsize=12)
+            ax.set_title('Global Rank Over Time', fontsize=14, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+            
+            # 反转 y 轴（排名越小越好）
+            ax.invert_yaxis()
+            
+            # 格式化 x 轴日期
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, days // 10)))
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        plt.tight_layout()
+        
+        # 保存到字节流
+        buf = BytesIO()
+        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        buf.seek(0)
+        plt.close(fig)
+        
+        return buf
+    
+    async def _generate_accuracy_chart(self, stats_history: List[StatsUpdate],
+                                       username: str, mode: str, days: int) -> BytesIO:
+        """
+        生成准确率变化图表
+        
+        Args:
+            stats_history: 统计历史数据
+            username: 用户名
+            mode: 游戏模式
+            days: 天数范围
+            
+        Returns:
+            BytesIO: 图表图片的字节流
+        """
+        fig, ax = plt.subplots(figsize=(12, 6))
+        fig.suptitle(f'{username} - {mode.upper()} Mode Accuracy Statistics (Last {days} Days)', 
+                    fontsize=16, fontweight='bold')
+        
+        if stats_history:
+            timestamps = [datetime.datetime.fromisoformat(s.timestamp.replace('Z', '+00:00')) 
+                         for s in stats_history]
+            accuracies = [s.accuracy for s in stats_history]
+            
+            ax.plot(timestamps, accuracies, color='#FFB366', linewidth=2, marker='o', 
+                   markersize=4, label='Accuracy')
+            ax.set_xlabel('Date', fontsize=12)
+            ax.set_ylabel('Accuracy (%)', fontsize=12)
+            ax.set_title('Accuracy Over Time', fontsize=14, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+            
+            # 设置 y 轴范围（准确率通常在 90-100 之间）
+            if accuracies:
+                min_acc = min(accuracies)
+                max_acc = max(accuracies)
+                padding = (max_acc - min_acc) * 0.1 or 1
+                ax.set_ylim(min_acc - padding, max_acc + padding)
+            
+            # 格式化 x 轴日期
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, days // 10)))
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        plt.tight_layout()
+        
+        # 保存到字节流
+        buf = BytesIO()
+        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        buf.seek(0)
+        plt.close(fig)
+        
+        return buf
+
+    @osu.command("chart") #@audit-ok
+    async def get_chart(self, event: AstrMessageEvent, mode: str = "osu", days: int = 30, type: str = "pp"):
+        """
+        返回成绩统计图表
+        
+        Args:
+            mode: 游戏模式 (osu, taiko, fruits, mania)
+            days: 天数范围
+            type: 图表类型 (pp, rank, accuracy)
+        """
+        # 检查用户认证状态（需要 public 权限）
+        auth_ok, platform_id, osu_id = await self._check_user_authentication(event, [Scopes.PUBLIC])
+        if not auth_ok:
+            return
+        
+        # 验证参数
+        if type not in ['pp', 'rank', 'accuracy', 'acc']:
             await event.send(MessageChain([Comp.Plain(
-                f"❌ 获取好友列表失败: {str(e)}\n"
-                "请检查您是否有 friends.read 权限，或稍后重试"
+                get_info("common.error_generic", 
+                        operation="生成图表", 
+                        error=f"无效的图表类型: {type}\n支持的类型: pp, rank, accuracy")
+            )]))
+            return
+        
+        if days < 1 or days > 365:
+            await event.send(MessageChain([Comp.Plain(
+                get_info("common.error_generic",
+                        operation="生成图表",
+                        error="天数范围必须在 1-365 之间")
+            )]))
+            return
+        
+        try:
+            # 验证和转换模式
+            validated_mode = validate_osu_mode(mode)
+            track_mode = convert_osu_mode_to_track_mode(validated_mode)
+            
+            # 确认时间，使用YYYY-MM-DD格式
+            to_date = datetime.datetime.now(datetime.timezone.utc)
+            from_date = to_date - timedelta(days=days)
+            from_date_str = from_date.strftime("%Y-%m-%d")
+            to_date_str = to_date.strftime("%Y-%m-%d")
+            
+            await event.send(MessageChain([Comp.Plain(
+                get_info("common.loading", type=f"{type.upper()} 图表")
+            )]))
+            
+            # 获取统计历史数据
+            stats_history = await self.osu_track_client.get_stats_history(
+                osu_id, track_mode, from_date_str, to_date_str
+            )
+            
+            if not stats_history:
+                await event.send(MessageChain([Comp.Plain(
+                    get_info("common.error_generic",
+                            operation="获取统计数据",
+                            error=f"在过去 {days} 天内没有找到任何统计数据")
+                )]))
+                return
+            
+            # 获取用户名
+            user_info = await self.osu_client.get_own_data(platform_id, validated_mode)
+            username = user_info.username
+            
+            # 根据类型生成对应的图表
+            if type == 'pp':
+                # PP 图表需要额外获取高分数据
+                hiscores = await self.osu_track_client.get_hiscores(
+                    osu_id, track_mode, from_date_str, to_date_str
+                )
+                chart_buf = await self._generate_pp_chart(
+                    stats_history, hiscores, username, validated_mode, days
+                )
+            elif type == 'rank':
+                chart_buf = await self._generate_rank_chart(
+                    stats_history, username, validated_mode, days
+                )
+            else:  # accuracy or acc
+                chart_buf = await self._generate_accuracy_chart(
+                    stats_history, username, validated_mode, days
+                )
+            
+            # 发送图表（直接使用原始 PNG bytes）
+            chart_bytes = chart_buf.read()
+            await event.send(MessageChain([
+                Comp.Image.fromBytes(chart_bytes)
+            ]))
+            
+        except ValueError as e:
+            await event.send(MessageChain([Comp.Plain(
+                get_info("common.error_generic", operation="参数验证", error=str(e))
+            )]))
+        except Exception as e:
+            logger.error(f"生成图表失败: {e}")
+            await event.send(MessageChain([Comp.Plain(
+                get_info("common.error_generic", operation="生成图表", error=str(e))
             )]))
 
     @osu.group("search")
     def search(self, event: AstrMessageEvent):
         pass
 
-    @search.command("map")
+    @search.command("map") #@audit-ok
     async def search_map(self, event: AstrMessageEvent, query: str, num_per_page: int, page_num: int, flag: str = None):
         """
         搜索谱面
@@ -914,209 +1111,94 @@ class OsuTrackPlugin(Star):
         
         # 参数验证
         if not query:
-            await event.send(MessageChain([Comp.Plain(
-                "❌ 请提供搜索关键词\n"
-                "用法: /osu search map <关键词> <每页数量> <页码> [advanced]\n"
-                "示例: /osu search map xi 10 1"
-            )]))
+            await event.send(MessageChain([Comp.Plain(get_info("beatmap.search_usage"))]))
             return
         
         if num_per_page <= 0 or num_per_page > 50:
-            await event.send(MessageChain([Comp.Plain(
-                "❌ 每页数量必须在 1-50 之间"
-            )]))
+            await event.send(MessageChain([Comp.Plain(get_info("beatmap.search_num_per_page_error"))]))
             return
         
         if page_num < 1:
-            await event.send(MessageChain([Comp.Plain(
-                "❌ 页码必须大于 0"
-            )]))
+            await event.send(MessageChain([Comp.Plain(get_info("beatmap.search_page_num_error"))]))
             return
         
         try:
             if flag == "advanced":
                 # 处理高级搜索逻辑
-                await event.send(MessageChain([Comp.Plain(
-                    "🔍 高级谱面搜索\n\n"
-                    "请按以下格式提供高级搜索参数（每行一个参数，可跳过不需要的参数）：\n\n"
-                    "🎵 艺术家（artist）: \n"
-                    "🎤 创建者（creator）: \n"
-                    "⭐ 最小星级（min_stars）: \n"
-                    "⭐ 最大星级（max_stars）: \n"
-                    "🎮 游戏模式（mode，osu/taiko/fruits/mania）: \n"
-                    "📋 状态（status，ranked/loved/pending/qualified）: \n"
-                    "📅 年份（year）: \n"
-                    "🏷️ 类型（genre_id，1-未指定 2-视频游戏 3-动漫 4-摇滚 5-流行 6-其他 7-新奇 9-嘻哈 10-电子 11-金属 12-古典 13-民俗 14-爵士）: \n"
-                    "🌐 语言（language_id，1-未指定 2-英语 3-日语 4-中文 5-韩语 6-法语 7-德语 8-瑞典语 9-西班牙语 10-意大利语 11-俄语 12-波兰语 13-其他）: \n\n"
-                    "示例：\n"
-                    "artist=xi\n"
-                    "min_stars=5.0\n"
-                    "max_stars=7.0\n"
-                    "mode=osu\n"
-                    "status=ranked\n\n"
-                    "⏰ 请在 5 分钟内发送，超时将取消搜索"
-                )]))
+                prompt_message = get_info("beatmap.advanced_search_prompt")
+                await event.send(MessageChain([Comp.Plain(prompt_message)]))
                 
                 # 设置会话等待高级搜索参数
-                search_params = {"query": query}
-                
-                @session_waiter(timeout=300)  # 5分钟超时
-                async def handle_advanced_search(controller: SessionController, event: AstrMessageEvent):
+                @session_waiter(timeout=300)
+                async def handle_advanced_search_input(controller: SessionController, event: AstrMessageEvent):
                     try:
                         user_input = event.message_str.strip()
                         
                         # 检查是否取消
                         if user_input.lower() in ['取消', 'cancel', '退出', 'quit']:
-                            await event.send(MessageChain([Comp.Plain("❌ 已取消高级搜索")]))
+                            await event.send(MessageChain([Comp.Plain(get_info("common.cancel", type="高级搜索"))]))
                             controller.stop()
                             return
                         
                         # 解析高级搜索参数
-                        lines = user_input.split('\n')
-                        for line in lines:
-                            line = line.strip()
-                            if '=' in line:
-                                key, value = line.split('=', 1)
-                                key = key.strip()
-                                value = value.strip()
-                                
-                                if value:  # 只处理有值的参数
-                                    search_params[key] = value
+                        params = self._parse_advanced_search_params(user_input)
                         
-                        # 如果没有额外参数，只使用基础查询
-                        if len(search_params) == 1:  # 只有query
-                            await event.send(MessageChain([Comp.Plain(
-                                "ℹ️ 未提供额外搜索参数，将使用基础搜索"
-                            )]))
+                        await event.send(MessageChain([Comp.Plain(get_info("common.loading", type="高级搜索"))]))
                         
-                        await event.send(MessageChain([Comp.Plain(f"🔄 正在进行高级搜索...")]))
-                        
-                        # 准备搜索参数
-                        search_kwargs = {"platform_id": platform_id}
-                        
-                        # 映射基础查询
-                        if "query" in search_params:
-                            search_kwargs["query"] = search_params["query"]
-                        
-                        # 映射其他参数
-                        param_mapping = {
-                            "mode": "mode",
-                            "status": "category", 
-                            "genre_id": "genre",
-                            "language_id": "language",
-                        }
-                        
-                        for user_param, api_param in param_mapping.items():
-                            if user_param in search_params:
-                                search_kwargs[api_param] = search_params[user_param]
-                        
-                        # 执行高级搜索
-                        search_results = await self.osu_client.search_beatmapsets(**search_kwargs)
-                        
-                        # 处理搜索结果（限制返回数量和分页）
-                        if search_results and hasattr(search_results, 'beatmapsets'):
-                            beatmapsets = search_results.beatmapsets
-                            # 计算分页
-                            start_idx = (page_num - 1) * num_per_page
-                            end_idx = start_idx + num_per_page
-                            paginated_beatmapsets = beatmapsets[start_idx:end_idx]
-                            
-                            # 创建分页后的结果对象
-                            try:
-                                paginated_results = type(search_results)(
-                                    beatmapsets=paginated_beatmapsets,
-                                    cursor=getattr(search_results, 'cursor', None),
-                                    search=getattr(search_results, 'search', None),
-                                    recommended_difficulty=getattr(search_results, 'recommended_difficulty', None),
-                                    error=getattr(search_results, 'error', None),
-                                    total=getattr(search_results, 'total', None)
-                                )
-                            except Exception:
-                                # 如果无法创建相同类型的对象，创建一个简单的对象
-                                class SimpleSearchResult:
-                                    def __init__(self, beatmapsets, cursor=None):
-                                        self.beatmapsets = beatmapsets
-                                        self.cursor = cursor
-                                
-                                paginated_results = SimpleSearchResult(
-                                    beatmapsets=paginated_beatmapsets,
-                                    cursor=getattr(search_results, 'cursor', None)
-                                )
-                            
-                            await self._process_search_results(event, paginated_results, num_per_page, page_num, "高级搜索")
+                        # API不支持分页的排序方式，需要手动分页
+                        paginated_results = None
+                        if "sort" in params and params["sort"] not in ["relevance_desc", "updated_desc"]:
+                            all_results = await self.osu_client.search_beatmapsets(query=query, **params)
+                            start_index = (page_num - 1) * num_per_page
+                            end_index = start_index + num_per_page
+                            paginated_results = all_results[start_index:end_index]
+                            search_results = all_results  # 用于获取总数
                         else:
-                            await self._process_search_results(event, search_results, num_per_page, page_num, "高级搜索")
+                            params["page"] = page_num
+                            search_results = await self.osu_client.search_beatmapsets(query=query, **params)
+
+                        # 处理和发送结果
+                        await self._process_search_results(
+                            event, 
+                            paginated_results if paginated_results is not None else search_results.beatmapsets,
+                            num_per_page, 
+                            page_num, 
+                            "高级搜索",
+                            total_results=len(search_results)
+                        )
                         
                         controller.stop()
-                        
                     except Exception as e:
                         logger.error(f"高级搜索失败: {e}")
                         await event.send(MessageChain([Comp.Plain(
-                            f"❌ 高级搜索失败: {str(e)}\n"
-                            "请检查搜索参数格式是否正确"
+                            get_info("beatmap.advanced_search_error", error=str(e))
                         )]))
                         controller.stop()
-                
-                # 开始等待用户输入
+
                 try:
-                    await handle_advanced_search(event)
+                    await handle_advanced_search_input(event)
                 except TimeoutError:
                     await event.send(MessageChain([Comp.Plain(
-                        "⏰ 输入超时（5分钟），高级搜索已取消"
+                        get_info("batch_query.timeout", command="高级搜索")
                     )]))
-                    
+                return
             else:
                 # 处理普通搜索逻辑
                 await event.send(MessageChain([Comp.Plain(f"🔄 正在搜索谱面：{query}...")]))
                 
                 # 执行普通搜索
-                search_results = await self.osu_client.search_beatmapsets(
-                    platform_id=platform_id, 
-                    query=query
-                )
-                
-                # 处理搜索结果（限制返回数量和分页）
-                if search_results and hasattr(search_results, 'beatmapsets'):
-                    beatmapsets = search_results.beatmapsets
-                    # 计算分页
-                    start_idx = (page_num - 1) * num_per_page
-                    end_idx = start_idx + num_per_page
-                    paginated_beatmapsets = beatmapsets[start_idx:end_idx]
-                    
-                    # 创建分页后的结果对象
-                    try:
-                        paginated_results = type(search_results)(
-                            beatmapsets=paginated_beatmapsets,
-                            cursor=getattr(search_results, 'cursor', None),
-                            search=getattr(search_results, 'search', None),
-                            recommended_difficulty=getattr(search_results, 'recommended_difficulty', None),
-                            error=getattr(search_results, 'error', None),
-                            total=getattr(search_results, 'total', None)
-                        )
-                    except Exception:
-                        # 如果无法创建相同类型的对象，创建一个简单的对象
-                        class SimpleSearchResult:
-                            def __init__(self, beatmapsets, cursor=None):
-                                self.beatmapsets = beatmapsets
-                                self.cursor = cursor
-                        
-                        paginated_results = SimpleSearchResult(
-                            beatmapsets=paginated_beatmapsets,
-                            cursor=getattr(search_results, 'cursor', None)
-                        )
-                    
-                    await self._process_search_results(event, paginated_results, num_per_page, page_num, "普通搜索")
-                else:
-                    await self._process_search_results(event, search_results, num_per_page, page_num, "普通搜索")
-                
+                await event.send(MessageChain([Comp.Plain(get_info("common.loading", type="搜索"))]))
+                search_results = await self.osu_client.search_beatmapsets(query=query, page=page_num)
+                await self._process_search_results(event, search_results.beatmapsets, num_per_page, page_num, "搜索", total_results=len(search_results))
         except Exception as e:
             logger.error(f"搜索谱面失败: {e}")
             await event.send(MessageChain([Comp.Plain(
                 f"❌ 搜索失败: {str(e)}\n"
-                "请稍后重试"
+                "请检查搜索参数，或稍后重试"
             )]))
 
-    async def _process_search_results(self, event: AstrMessageEvent, search_results, num_per_page: int, page_num: int, search_type: str):
+    #------- 辅助方法 -------#
+    async def _process_search_results(self, event: AstrMessageEvent, results: list, num_per_page: int, page_num: int, search_type: str, total_results: int = 0):
         """
         处理搜索结果并发送消息
         
@@ -1127,422 +1209,284 @@ class OsuTrackPlugin(Star):
             page_num: 页码
             search_type: 搜索类型（用于显示）
         """
-        if not search_results or not hasattr(search_results, 'beatmapsets') or not search_results.beatmapsets:
-            await event.send(MessageChain([Comp.Plain(
-                f"🔍 {search_type}结果：未找到匹配的谱面"
-            )]))
+        if not results:
+            await event.send(MessageChain([Comp.Plain(get_info("beatmap.search_no_results"))]))
             return
+
+        # 计算总页数
+        total_pages = (total_results + num_per_page - 1) // num_per_page if total_results > 0 else 1
         
-        beatmapsets = search_results.beatmapsets
-        total_found = len(beatmapsets)
-        
-        # 发送搜索概览
-        cursor_info = ""
-        if hasattr(search_results, 'cursor') and search_results.cursor:
-            cursor_info = f"\n📄 搜索游标：{search_results.cursor}"
-        
-        overview_message = (
-            f"🔍 {search_type}结果\n"
-            f"📊 第 {page_num} 页，找到 {total_found} 个谱面集{cursor_info}\n"
-            f"正在发送详细信息..."
+        # 发送概览
+        overview_message = get_info(
+            "beatmap.search_overview",
+            type=search_type,
+            count=len(results),
+            total=total_results,
+            page=page_num,
+            total_pages=total_pages
         )
         await event.send(MessageChain([Comp.Plain(overview_message)]))
         
-        # 逐个发送谱面集信息
-        for i, beatmapset in enumerate(beatmapsets, 1):
-            try:
-                # 格式化谱面集信息
-                cover_url, beatmapset_message = self._format_beatmapset_info(beatmapset)
-                
-                # 构建消息链
-                chain = []
-                if cover_url:
-                    chain.append(Comp.Image.fromURL(cover_url))
-                
-                # 添加序号前缀
-                prefixed_message = f"【{i}/{total_found}】\n{beatmapset_message}"
-                chain.append(Comp.Plain(prefixed_message))
-                
-                # 发送单个谱面集信息
-                await event.send(MessageChain(chain))
-                
-                # 稍微延迟避免发送过快
-                if i < total_found:  # 最后一个不需要延迟
-                    await asyncio.sleep(0.5)
-                    
-            except Exception as e:
-                logger.error(f"发送谱面集 {i} 信息失败: {e}")
-                await event.send(MessageChain([Comp.Plain(
-                    f"❌ 【{i}/{total_found}】发送谱面集信息失败: {str(e)}"
-                )]))
-        
-        # 发送翻页提示
-        if total_found == num_per_page:
-            next_page_tip = f"\n💡 可能还有更多结果，使用 /osu search map <关键词> {num_per_page} {page_num + 1} 查看下一页"
-            await event.send(MessageChain([Comp.Plain(
-                f"✅ 搜索完成！{next_page_tip}"
-            )]))
-        else:
-            await event.send(MessageChain([Comp.Plain("✅ 搜索完成！")]))
-
+        # 逐个发送结果
+        for i, beatmapset in enumerate(results, 1):
+            message = self._format_beatmapset_info(beatmapset, show_beatmaps=False)
+            
+            # 添加序号
+            prefix = f"【{i + (page_num - 1) * num_per_page}/{total_results}】\n" if total_results > 0 else f"【{i}】\n"
+            
+            # 构建消息链
+            chain = []
+            if beatmapset.card_url:
+                try:
+                    chain.append(Comp.Image.fromURL(beatmapset.card_url))
+                except Exception as e:
+                    logger.warning(f"无法加载谱面集卡片图片: {e}")
+            
+            chain.append(Comp.Plain(prefix + message))
+            
+            await event.send(MessageChain(chain))
+            
+            if i < len(results):
+                await asyncio.sleep(0.5)
+    
     async def _send_friend_info(self, event: AstrMessageEvent, friend, index: int, total: int, prefix: str):
         """
-        发送单个好友的信息
+        发送好友信息
         
         Args:
             event: 消息事件
-            friend: 好友用户数据（UserExtended对象）
+            friend: UserExtended 对象（好友用户信息）
             index: 当前索引
             total: 总数
-            prefix: 前缀图标
+            prefix: 前缀emoji
         """
-        # 处理 UserExtended 对象
-        if hasattr(friend, 'username'):
-            # 直接从 UserExtended 对象获取用户信息
-            username = friend.username or '未知'
-            user_id = friend.id or '未知'
-            is_online = friend.is_online
-            avatar_url = friend.avatar_url
-        elif isinstance(friend, dict):
-            # 兼容字典格式
-            username = friend.get('username', '未知')
-            user_id = friend.get('id', '未知')
-            is_online = friend.get('is_online', None)
-            avatar_url = friend.get('avatar_url', None)
-        else:
-            # 其他格式兼容
-            username = getattr(friend, 'username', '未知')
-            user_id = getattr(friend, 'id', '未知')
-            is_online = getattr(friend, 'is_online', None)
-            avatar_url = getattr(friend, 'avatar_url', None)
+        # friend 本身就是 UserExtended 对象，使用 _format_user_info 格式化
+        avatar_url, user_message = self._format_user_info(friend)
         
-        # 构建在线状态
-        if is_online is True:
-            online_status = "🟢 在线"
-        elif is_online is False:
-            online_status = "🔴 离线"
-        else:
-            online_status = "❓ 未知"
-        
-        # 检查好友是否在本机器人中绑定了账号
-        friend_platform_id = self.link_account_manager.get_platform_id_by_osu(str(user_id))
-        bind_status = f"🔗 已绑定: {friend_platform_id}" if friend_platform_id else "❌ 未绑定"
-        
-        friend_message = (
-            f"{prefix} 【{index}/{total}】\n"
-            f"🎮 用户名: {username}\n"
-            f"📡 状态: {online_status}\n"
-            f"{bind_status}"
-        )
+        # 添加序号前缀
+        prefixed_message = f"{prefix} 【{index}/{total}】\n{user_message}"
         
         # 构建消息链
         chain = []
-        
-        # 添加头像
         if avatar_url:
-            chain.append(Comp.Image.fromURL(avatar_url))
+            try:
+                chain.append(Comp.Image.fromURL(avatar_url))
+            except Exception as e:
+                logger.warning(f"无法加载用户头像: {e}")
         
-        chain.append(Comp.Plain(friend_message))
-        
-        # 发送消息
+        chain.append(Comp.Plain(prefixed_message))
         await event.send(MessageChain(chain))
 
-    def _format_beatmap_info(self, beatmap_info) -> str:
+    async def _check_user_authentication(self, event: AstrMessageEvent, require_scopes: list[Scopes] = None) -> tuple[bool, str, str]:
         """
-        格式化谱面信息为可读文本
+        检查用户认证状态
         
         Args:
-            beatmap_info: BeatmapExtended 对象
+            event: 消息事件
+            require_scopes: 需要的权限范围列表，如 [Scopes.PUBLIC] 或 [Scopes.IDENTIFY]
             
         Returns:
-            str: 格式化后的谱面信息文本
+            tuple[bool, str, str]: (是否通过检查, 平台ID, OSU用户ID)
+                                   如果检查失败，会自动发送错误消息
         """
-        # 基本信息
-        basic_info = [
-            "🗺️ 谱面信息:",
-            f"🎵 标题: {beatmap_info.beatmapset.title if beatmap_info.beatmapset else '未知'}",
-            f"👤 作者: {beatmap_info.beatmapset.artist if beatmap_info.beatmapset else '未知'}",
-            f"⭐ 难度: {beatmap_info.version}",
-            f"🆔 谱面ID: {beatmap_info.id}",
-            f"🎯 谱面集ID: {beatmap_info.beatmapset_id}",
-        ]
+        platform_id = event.get_sender_id()
         
-        # 制作者信息
-        if beatmap_info.beatmapset and beatmap_info.beatmapset.creator:
-            basic_info.append(f"🎨 制作者: {beatmap_info.beatmapset.creator}")
+        # 检查是否已关联
+        existing_osu_id = self.link_account_manager.get_osu_id_by_platform(platform_id)
+        if not existing_osu_id:
+            await event.send(MessageChain([Comp.Plain(get_info("auth_check.not_linked"))]))
+            return False, platform_id, ""
         
-        # 难度统计
-        if beatmap_info.difficulty_rating:
-            basic_info.append(f"⭐ 星级: {beatmap_info.difficulty_rating:.2f}")
+        # 检查是否有有效的 token
+        if not self.osu_client.has_valid_token(platform_id):
+            await event.send(MessageChain([Comp.Plain(get_info("auth_check.expired"))]))
+            return False, platform_id, existing_osu_id
         
-        # 谱面统计
-        stats_info = []
-        if beatmap_info.bpm:
-            stats_info.append(f"🎼 BPM: {beatmap_info.bpm}")
-        if beatmap_info.total_length:
-            minutes = beatmap_info.total_length // 60
-            seconds = beatmap_info.total_length % 60
-            stats_info.append(f"⏱️ 长度: {minutes}:{seconds:02d}")
-        if beatmap_info.count_circles is not None:
-            stats_info.append(f"⭕ 圆圈: {beatmap_info.count_circles}")
-        if beatmap_info.count_sliders is not None:
-            stats_info.append(f"🔗 滑条: {beatmap_info.count_sliders}")
-        if beatmap_info.count_spinners is not None:
-            stats_info.append(f"🌀 转盘: {beatmap_info.count_spinners}")
-        
-        if stats_info:
-            basic_info.append("")
-            basic_info.append("📊 谱面统计:")
-            basic_info.extend(stats_info)
-        
-        # 状态信息
-        if hasattr(beatmap_info, 'status') and beatmap_info.status:
-            status_map = {
-                'graveyard': '⚰️ 坟场',
-                'wip': '🚧 制作中',
-                'pending': '⏳ 待审核',
-                'ranked': '✅ Ranked',
-                'approved': '👑 Approved',
-                'qualified': '🔰 Qualified',
-                'loved': '❤️ Loved'
-            }
-            status_text = status_map.get(beatmap_info.status, beatmap_info.status)
-            basic_info.append(f"📋 状态: {status_text}")
-        
-        # 模式信息
-        if hasattr(beatmap_info, 'mode') and beatmap_info.mode:
-            mode_map = {
-                'osu': '🎯 osu!',
-                'taiko': '🥁 taiko',
-                'fruits': '🍎 catch',
-                'mania': '🎹 mania'
-            }
-            mode_text = mode_map.get(beatmap_info.mode, beatmap_info.mode)
-            basic_info.append(f"🎮 模式: {mode_text}")
-        
-        return "\n".join(basic_info)
-
-    def _format_beatmapset_info(self, beatmapset_info) -> tuple[str, str]:
-        """
-        格式化谱面集信息为可读文本
-        
-        Args:
-            beatmapset_info: BeatmapsetExtended 对象
+        # 如果需要特定权限，进行权限检查
+        if require_scopes:
+            missing_scopes = []
+            for scope in require_scopes:
+                scope_value = scope.value if isinstance(scope, Scopes) else str(scope)
+                if not self.osu_client.check_scope_permission(platform_id, scope_value):
+                    missing_scopes.append(scope_value)
             
-        Returns:
-            tuple[str, str]: (cover_url, formatted_text) 封面URL和格式化后的谱面集信息文本
-        """
-        # 基本信息
-        basic_info = [
-            "🗂️ 谱面集信息:",
-            f"🎵 标题: {beatmapset_info.title}",
-            f"👤 艺术家: {beatmapset_info.artist}",
-            f"🎨 制作者: {beatmapset_info.creator}",
-            f"🆔 谱面集ID: {beatmapset_info.id}",
-        ]
+            if missing_scopes:
+                scopes_text = ", ".join(missing_scopes)
+                await event.send(MessageChain([Comp.Plain(
+                    get_info("auth_check.insufficient_scope", scopes=scopes_text)
+                )]))
+                return False, platform_id, existing_osu_id
         
-        # 状态信息
-        if hasattr(beatmapset_info, 'status') and beatmapset_info.status:
-            status_map = {
-                'graveyard': '⚰️ 坟场',
-                'wip': '🚧 制作中',
-                'pending': '⏳ 待审核',
-                'ranked': '✅ Ranked',
-                'approved': '👑 Approved',
-                'qualified': '🔰 Qualified',
-                'loved': '❤️ Loved'
-            }
-            status_text = status_map.get(beatmapset_info.status, beatmapset_info.status)
-            basic_info.append(f"📋 状态: {status_text}")
-        
-        # 日期信息
-        if hasattr(beatmapset_info, 'submitted_date') and beatmapset_info.submitted_date:
-            basic_info.append(f"📅 提交日期: {beatmapset_info.submitted_date[:10]}")
-        if hasattr(beatmapset_info, 'ranked_date') and beatmapset_info.ranked_date:
-            basic_info.append(f"🏆 Ranked日期: {beatmapset_info.ranked_date[:10]}")
-        
-        # 谱面统计
-        if hasattr(beatmapset_info, 'beatmaps') and beatmapset_info.beatmaps:
-            beatmaps = beatmapset_info.beatmaps
-            basic_info.append("")
-            basic_info.append(f"🗺️ 包含谱面数: {len(beatmaps)}")
-            
-            # 按模式分组统计
-            mode_counts = {}
-            difficulty_range = {'min': float('inf'), 'max': 0}
-            
-            for beatmap in beatmaps:
-                mode = beatmap.get('mode', 'osu') if isinstance(beatmap, dict) else getattr(beatmap, 'mode', 'osu')
-                mode_counts[mode] = mode_counts.get(mode, 0) + 1
-                
-                # 统计难度范围
-                diff_rating = beatmap.get('difficulty_rating', 0) if isinstance(beatmap, dict) else getattr(beatmap, 'difficulty_rating', 0)
-                if diff_rating:
-                    difficulty_range['min'] = min(difficulty_range['min'], diff_rating)
-                    difficulty_range['max'] = max(difficulty_range['max'], diff_rating)
-            
-            # 显示模式分布
-            mode_map = {
-                'osu': '🎯 osu!',
-                'taiko': '🥁 taiko', 
-                'fruits': '🍎 catch',
-                'mania': '🎹 mania'
-            }
-            
-            mode_info = []
-            for mode, count in mode_counts.items():
-                mode_text = mode_map.get(mode, mode)
-                mode_info.append(f"  {mode_text}: {count}个")
-            
-            if mode_info:
-                basic_info.extend(mode_info)
-            
-            # 显示难度范围
-            if difficulty_range['min'] != float('inf'):
-                basic_info.append(f"⭐ 难度范围: {difficulty_range['min']:.2f} - {difficulty_range['max']:.2f}")
-        
-        # 统计信息
-        stats_info = []
-        if hasattr(beatmapset_info, 'play_count') and beatmapset_info.play_count:
-            stats_info.append(f"▶️ 游玩次数: {beatmapset_info.play_count:,}")
-        if hasattr(beatmapset_info, 'favourite_count') and beatmapset_info.favourite_count:
-            stats_info.append(f"❤️ 收藏数: {beatmapset_info.favourite_count:,}")
-        
-        if stats_info:
-            basic_info.append("")
-            basic_info.append("📊 统计信息:")
-            basic_info.extend(stats_info)
-        
-        # 获取封面图片URL
-        cover_url = None
-        if hasattr(beatmapset_info, 'covers') and beatmapset_info.covers:
-            # 优先使用 cover_2x，其次 cover，最后 list_2x
-            covers = beatmapset_info.covers
-            cover_url = (covers.cover_2x or 
-                        covers.cover or 
-                        covers.list_2x or 
-                        covers.list)
-        
-        return cover_url, "\n".join(basic_info)
-
+        return True, platform_id, existing_osu_id
+    
     def _format_user_info(self, user_info, is_self: bool = False) -> tuple[str, str]:
         """
-        格式化用户信息为可读文本
+        格式化用户信息
         
         Args:
-            user_info: UserExtended 对象
-            is_self: 是否为当前用户自己的信息
+            user_info: 用户信息对象
+            is_self: 是否为当前用户自己
             
         Returns:
-            tuple[str, str]: (avatar_url, formatted_text) 头像URL和格式化后的用户信息文本
+            tuple[str, str]: (头像URL, 格式化后的消息文本)
         """
-        prefix = "📋 您的 OSU 信息" if is_self else "📋 用户信息"
+        avatar_url = user_info.avatar_url
         
-        # 基本信息
-        basic_info = [
-            f"{prefix}:",
-            f"🎮 用户名: {user_info.username}",
-            f"🆔 用户ID: {user_info.id}",
-        ]
+        # 构建基础信息
+        message_parts = []
+        message_parts.append(get_info("user.format.username", username=user_info.username))
+        message_parts.append(get_info("user.format.user_id", id=user_info.id))
         
-        # 国家信息
-        if user_info.country:
-            basic_info.append(f"🌍 国家: {user_info.country.get('name', '未知')}")
+        if user_info.country_code:
+            message_parts.append(get_info("user.format.country", country_code=user_info.country_code))
         
-        # 加入日期
-        if user_info.join_date:
-            basic_info.append(f"📅 加入日期: {user_info.join_date}")
-        
-        # 游戏统计信息
+        # 添加统计信息
         if user_info.statistics:
             stats = user_info.statistics
+            message_parts.append(get_info("user.format.statistics_header"))
             
-            stats_info = [
-                "",
-                "📊 游戏统计:",
-                f"⭐ 等级: {stats.level.get('current') if stats.level else 'N/A'}",
-                f"🏆 PP: {stats.pp or 'N/A'}",
-                f"🎯 准确率: {stats.hit_accuracy:.2f}%" if stats.hit_accuracy else "🎯 准确率: N/A",
-                f"🎲 游戏次数: {stats.play_count or 'N/A'}",
-                f"⏱️ 游戏时间: {self._format_play_time(stats.play_time) if stats.play_time else 'N/A'}",
-            ]
+            if stats.pp is not None:
+                message_parts.append(get_info("user.format.pp", pp=f"{stats.pp:.2f}"))
             
-            # 排名信息
-            if stats.global_rank:
-                stats_info.append(f"🌍 全球排名: #{stats.global_rank}")
-            if stats.country_rank:
-                stats_info.append(f"🏳️ 国家排名: #{stats.country_rank}")
+            if stats.global_rank is not None:
+                message_parts.append(get_info("user.format.global_rank", rank=f"{stats.global_rank:,}"))
             
-            basic_info.extend(stats_info)
+            if stats.country_rank is not None:
+                message_parts.append(get_info("user.format.country_rank", rank=f"{stats.country_rank:,}"))
+            
+            if stats.hit_accuracy is not None:
+                message_parts.append(get_info("user.format.accuracy", accuracy=f"{stats.hit_accuracy:.2f}"))
+            
+            if stats.play_count is not None:
+                message_parts.append(get_info("user.format.play_count", count=f"{stats.play_count:,}"))
+            
+            if stats.ranked_score is not None:
+                message_parts.append(get_info("user.format.ranked_score", score=f"{stats.ranked_score:,}"))
+            
+            if stats.total_score is not None:
+                message_parts.append(get_info("user.format.total_score", score=f"{stats.total_score:,}"))
+            
+            if stats.maximum_combo is not None:
+                message_parts.append(get_info("user.format.max_combo", combo=f"{stats.maximum_combo:,}"))
         
-        # 在线状态
-        if hasattr(user_info, 'is_online') and user_info.is_online is not None:
-            status = "🟢 在线" if user_info.is_online else "🔴 离线"
-            basic_info.append(f"📡 状态: {status}")
+        # 添加在线状态
+        if user_info.is_online:
+            message_parts.append(get_info("user.format.status_online"))
+        else:
+            message_parts.append(get_info("user.format.status_offline"))
         
-        # 支持者状态
-        if hasattr(user_info, 'is_supporter') and user_info.is_supporter:
-            basic_info.append("💎 OSU 支持者")
+        # 添加支持者状态
+        if user_info.is_supporter:
+            message_parts.append(get_info("user.format.supporter"))
         
-        # 返回头像URL和格式化文本
-        avatar_url = user_info.avatar_url if hasattr(user_info, 'avatar_url') and user_info.avatar_url else None
-        return avatar_url, "\n".join(basic_info)
-
-    def _format_play_time(self, play_time_seconds: int) -> str:
+        return avatar_url, "\n".join(message_parts)
+    
+    def _format_beatmap_info(self, beatmap_info) -> str:
         """
-        格式化游戏时间为可读格式
+        格式化谱面信息
         
         Args:
-            play_time_seconds: 游戏时间（秒）
+            beatmap_info: 谱面信息对象
             
         Returns:
-            str: 格式化后的时间字符串
+            str: 格式化后的消息文本
         """
-        if not play_time_seconds:
-            return "N/A"
+        message_parts = []
+        message_parts.append(get_info("beatmap.format.version", version=beatmap_info.version))
+        message_parts.append(get_info("beatmap.format.beatmap_id", id=beatmap_info.id))
+        message_parts.append(get_info("beatmap.format.beatmapset_id", beatmapset_id=beatmap_info.beatmapset_id))
+        message_parts.append(get_info("beatmap.format.difficulty", rating=f"{beatmap_info.difficulty_rating:.2f}"))
+        message_parts.append(get_info("beatmap.format.mode", mode=beatmap_info.mode))
+        message_parts.append(get_info("beatmap.format.status", status=beatmap_info.status))
         
-        hours = play_time_seconds // 3600
-        minutes = (play_time_seconds % 3600) // 60
+        # 添加详细参数
+        if beatmap_info.bpm is not None:
+            message_parts.append(get_info("beatmap.format.bpm", bpm=beatmap_info.bpm))
         
-        if hours > 0:
-            return f"{hours}小时 {minutes}分钟"
-        else:
-            return f"{minutes}分钟"
-
-    @osu.command("help")
-    async def help_command(self, event: AstrMessageEvent, command: str = None):
+        if beatmap_info.ar is not None:
+            message_parts.append(get_info("beatmap.format.ar", ar=beatmap_info.ar))
+        
+        if beatmap_info.cs is not None:
+            message_parts.append(get_info("beatmap.format.cs", cs=beatmap_info.cs))
+        
+        if beatmap_info.drain is not None:
+            message_parts.append(get_info("beatmap.format.hp", hp=beatmap_info.drain))
+        
+        # 添加物件数量
+        if beatmap_info.count_circles is not None or beatmap_info.count_sliders is not None:
+            message_parts.append(get_info("beatmap.format.objects_header"))
+            if beatmap_info.count_circles is not None:
+                message_parts.append(get_info("beatmap.format.circles", count=beatmap_info.count_circles))
+            if beatmap_info.count_sliders is not None:
+                message_parts.append(get_info("beatmap.format.sliders", count=beatmap_info.count_sliders))
+            if beatmap_info.count_spinners is not None:
+                message_parts.append(get_info("beatmap.format.spinners", count=beatmap_info.count_spinners))
+        
+        # 添加时长
+        if beatmap_info.total_length is not None:
+            minutes = beatmap_info.total_length // 60
+            seconds = beatmap_info.total_length % 60
+            message_parts.append(get_info("beatmap.format.duration", time=f"{minutes}:{seconds:02d}"))
+        
+        # 添加游戏数据
+        if beatmap_info.playcount is not None:
+            message_parts.append(get_info("beatmap.format.playcount", count=f"{beatmap_info.playcount:,}"))
+        
+        if beatmap_info.passcount is not None:
+            message_parts.append(get_info("beatmap.format.passcount", count=f"{beatmap_info.passcount:,}"))
+        
+        return "\n".join(message_parts)
+    
+    def _format_beatmapset_info(self, beatmapset_info, show_beatmaps: bool = True) -> tuple[str, str]:
         """
-        显示 OSU 插件帮助信息
+        格式化谱面集信息
+        
+        Args:
+            beatmapset_info: 谱面集信息对象
+            show_beatmaps: 是否显示包含的谱面列表
+            
+        Returns:
+            tuple[str, str]: (封面URL, 格式化后的消息文本)
         """
-        if command:
-            help_text = (
-                f"OSU! 插件帮助 - {command}\n\n"
-            )
-            help_info = HelpCommandInfo.get(command.upper())
-            if help_info:
-                help_text += help_info
-        else:
-            help_text = (
-                "OSU! 插件帮助\n\n"
-                "账号管理:\n"
-                "  /osu link - 关联 OSU 账号\n"
-                "  /osu unlink - 解除账号关联\n\n"
-                "查询功能:\n"
-                "  /osu me [模式] - 查看自己的信息\n"
-                "  /osu user <用户名/ID> [模式] [类型] - 查看指定用户信息\n"
-                "  /osu users - 批量查询用户信息（对话模式）\n"
-                "  /osu friend - 查看好友列表\n"
-                "  /osu map <谱面ID> - 查看谱面信息\n"
-                "  /osu mapset <谱面集ID> - 查看谱面集信息\n"
-                "  /osu mapsets - 批量查询谱面集信息（对话模式）\n\n"
-                "搜索功能:\n"
-                "  /osu search map <关键词> [单页数量] [页码] [高级搜索] - 查询谱面\n"
-                "成绩统计功能:\n"
-                "  /osu update [模式] - 上传成绩到 OSU!track（默认 osu 模式）\n\n"
-                "帮助:\n"
-                "  /osu help [命令] - 查看帮助信息\n"
-            )
-        await event.send(MessageChain([Comp.Plain(help_text)]))
+        cover_url = None
+        if hasattr(beatmapset_info, 'covers') and beatmapset_info.covers:
+            cover_url = beatmapset_info.covers.card or beatmapset_info.covers.cover
+        elif hasattr(beatmapset_info, 'card_url'):
+            cover_url = beatmapset_info.card_url
+        
+        message_parts = []
+        message_parts.append(get_info("beatmap.mapset_format.title", title=beatmapset_info.title))
+        
+        if hasattr(beatmapset_info, 'artist'):
+            message_parts.append(get_info("beatmap.mapset_format.artist", artist=beatmapset_info.artist))
+        
+        if hasattr(beatmapset_info, 'creator'):
+            message_parts.append(get_info("beatmap.mapset_format.creator", creator=beatmapset_info.creator))
+        
+        message_parts.append(get_info("beatmap.mapset_format.id", id=beatmapset_info.id))
+        
+        if hasattr(beatmapset_info, 'status'):
+            message_parts.append(get_info("beatmap.mapset_format.status", status=beatmapset_info.status))
+        
+        # 添加统计信息
+        if hasattr(beatmapset_info, 'play_count') and beatmapset_info.play_count is not None:
+            message_parts.append(get_info("beatmap.mapset_format.play_count", count=f"{beatmapset_info.play_count:,}"))
+        
+        if hasattr(beatmapset_info, 'favourite_count') and beatmapset_info.favourite_count is not None:
+            message_parts.append(get_info("beatmap.mapset_format.favourite_count", count=f"{beatmapset_info.favourite_count:,}"))
+        
+        # 如果需要显示包含的谱面
+        if show_beatmaps and hasattr(beatmapset_info, 'beatmaps') and beatmapset_info.beatmaps:
+            message_parts.append(get_info("beatmap.mapset_format.beatmaps_header", total=len(beatmapset_info.beatmaps)))
+            for beatmap in beatmapset_info.beatmaps[:5]:  # 最多显示5个
+                message_parts.append(get_info("beatmap.mapset_format.beatmap_item", 
+                                             version=beatmap.version, 
+                                             rating=f"{beatmap.difficulty_rating:.2f}"))
+            if len(beatmapset_info.beatmaps) > 5:
+                message_parts.append(get_info("beatmap.mapset_format.beatmaps_more", 
+                                             remaining=len(beatmapset_info.beatmaps) - 5))
+        
+        return cover_url, "\n".join(message_parts)
 
     async def terminate(self):
         return await super().terminate()

@@ -14,8 +14,8 @@ class UserMode(Enum):
 
 class ScoreRank(Enum):
     """成绩等级枚举"""
-    SS = "SS"    # 银SS
-    SSH = "SSH"  # 金SS
+    X = "X"    # 银SS
+    XH = "XH"  # 金SS
     S = "S"      # 银S
     SH = "SH"    # 金S
     A = "A"

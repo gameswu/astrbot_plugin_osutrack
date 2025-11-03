@@ -1,0 +1,141 @@
+general: |
+  OSU! 插件帮助
+
+  账号管理:
+    /osu link - 关联 OSU 账号
+    /osu unlink - 解除账号关联
+
+  查询功能:
+    /osu me [模式] - 查看自己的信息
+    /osu user <用户名/ID> [模式] [类型] - 查看指定用户信息
+    /osu users - 批量查询用户信息（对话模式）
+    /osu friend - 查看好友列表
+    /osu map <谱面ID> - 查看谱面信息
+    /osu mapset <谱面集ID> - 查看谱面集信息
+    /osu mapsets - 批量查询谱面集信息（对话模式）
+
+  搜索功能:
+    /osu search map <关键词> [单页数量] [页码] [高级搜索] - 查询谱面
+
+  成绩统计功能:
+    /osu update [模式] - 上传成绩到 OSU!track（默认 osu 模式）
+    /osu chart [模式] [天数] [类型] - 查看成绩统计图表
+
+  帮助:
+    /osu help [命令] - 查看帮助信息
+
+commands:
+  LINK: |
+    /osu link
+    功能: 关联您的平台账号和 OSU! 账号。
+    流程:
+      1. 发送 /osu link 指令。
+      2. 点击收到的授权链接，并在浏览器中授权。
+      3. 将授权成功后跳转的页面 URL 完整复制并发送给机器人。
+      4. 机器人会自动完成关联。
+    注意: 如果已有关联，需要先使用 /osu unlink 解除。
+
+  UNLINK: |
+    /osu unlink
+    功能: 解除当前平台账号与 OSU! 账号的关联。
+    注意: 解除关联后，所有需要认证的功能将无法使用，直到重新关联。
+
+  ME: |
+    /osu me [模式]
+    功能: 获取您当前关联的 OSU! 账号的详细信息。
+    参数:
+      - 模式 (可选): osu, taiko, fruits, mania。默认为用户在官网设置的默认模式。
+    示例:
+      /osu me
+      /osu me mania
+
+  USER: |
+    /osu user <用户名或ID> [模式] [类型]
+    功能: 查询指定 OSU! 用户的详细信息。
+    参数:
+      - 用户名或ID (必须): 用户的数字 ID 或用户名。
+      - 模式 (可选): osu, taiko, fruits, mania。
+      - 类型 (可选): id, name。用于强制指定查询类型，不填则自动检测。
+    示例:
+      /osu user peppy
+      /osu user 124493 taiko
+      /osu user "some user name" name
+
+  USERS: |
+    /osu users
+    功能: 批量查询多个用户的信息。
+    流程:
+      1. 发送 /osu users 指令。
+      2. 按照提示，在下一条消息中发送用空格分隔的用户ID列表。
+      3. 最多支持 50 个用户。
+
+  FRIEND: |
+    /osu friend
+    功能: 获取您的 OSU! 好友列表。
+    显示: 好友的头像、昵称、在线状态，并按互相关注和单向关注分类。
+    权限要求: friends.read (请确保在 link 时已授权)
+
+  UPDATE: |
+    /osu update [模式]
+    功能: 将您最新的成绩信息上传到 OSU!track 网站进行统计。
+    参数:
+      - 模式 (可选): osu, taiko, fruits, mania。默认为 osu。
+    注意: OSU!track 是一个第三方成绩追踪网站。
+
+  MAP: |
+    /osu map <谱面ID>
+    功能: 查询指定谱面的详细信息。
+    参数:
+      - 谱面ID (必须): 谱面的数字 ID。
+    示例:
+      /osu map 129891
+
+  MAPSET: |
+    /osu mapset <谱面集ID>
+    功能: 查询指定谱面集的详细信息，包含封面和所有难度。
+    参数:
+      - 谱面集ID (必须): 谱面集的数字 ID。
+    示例:
+      /osu mapset 41823
+
+  MAPSETS: |
+    /osu mapsets
+    功能: 批量查询多个谱面集的信息。
+    流程:
+      1. 发送 /osu mapsets 指令。
+      2. 按照提示，在下一条消息中发送用空格分隔的谱面集ID列表。
+      3. 最多支持 20 个谱面集。
+
+  SEARCH: |
+    /osu search map <关键词> [单页数量] [页码] [高级搜索]
+    功能: 搜索 OSU! 谱面集。
+    参数:
+      - 关键词 (必须): 搜索的关键词，可以是歌曲名、艺术家、制作者等。
+      - 单页数量 (可选): 每页显示的结果数量，默认 5，最多 50。
+      - 页码 (可选): 要查看的页码，从 1 开始。
+      - 高级搜索 (可选): 使用高级搜索语法进行更精确的搜索。
+    示例:
+      /osu search map sotarks
+      /osu search map "freedom dive" 10 2
+      /osu search map ar=9 stars>=6
+    高级搜索语法:
+      - ar=X: 搜索 AR 为 X 的谱面
+      - od=X: 搜索 OD 为 X 的谱面
+      - cs=X: 搜索 CS 为 X 的谱面
+      - hp=X: 搜索 HP 为 X 的谱面
+      - stars>=X: 搜索星级大于等于 X 的谱面
+      - bpm>=X: 搜索 BPM 大于等于 X 的谱面
+      - length>X: 搜索长度大于 X 秒的谱面
+      可以使用空格组合多个条件
+
+  CHART: |
+    /osu chart [模式] [天数] [类型]
+    功能: 查询您在 OSU!track 上的成绩统计图表信息。
+    参数:
+      - 模式 (可选): osu, taiko, fruits, mania。默认为 osu。
+      - 天数 (可选): 统计的天数范围，默认 30 天。
+      - 类型 (可选): pp, rank, acc。默认为 pp。
+    示例:
+      /osu chart
+      /osu chart taiko 60
+      /osu chart mania 90 rank
