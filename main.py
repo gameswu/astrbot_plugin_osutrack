@@ -491,15 +491,11 @@ class OsuTrackPlugin(Star):
             update_response = await self.osu_track_client.update_user(osu_id, track_mode)
             
             # 准备格式化参数
-            stats = update_response.stats
             format_params = {
                 "username": update_response.username,
                 "mode": validated_mode.upper(),
                 "new_hs_count": len(update_response.newhs) if update_response.newhs else 0,
-                "pp_change": f"{stats.pp:+.2f}" if stats and stats.pp is not None else "-",
-                "rank_change": f"{stats.rank:+d}" if stats and stats.rank is not None else "-",
-                "country_rank_change": f"{stats.country_rank:+d}" if stats and stats.country_rank is not None else "-",
-                "accuracy_change": f"{stats.accuracy:+.2f}%" if stats and stats.accuracy is not None else "-",
+                "pp_change": f"{update_response.pp_rank:+.2f}" if update_response.pp_rank is not None else "-"
             }
             
             # 发送成功消息
