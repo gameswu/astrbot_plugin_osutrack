@@ -230,9 +230,6 @@ update:
     🆕 新增高分: {new_hs_count}
     📊 统计变化:
       PP: {pp_change}
-      排名: {rank_change}
-      国家排名: {country_rank_change}
-      准确率: {accuracy_change}
   param_error: "❌ 参数错误: {error}"
 
 # ... 其他部分 ...
