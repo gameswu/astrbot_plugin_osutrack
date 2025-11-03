@@ -491,7 +491,7 @@ class OsuTrackPlugin(Star):
             update_response = await self.osu_track_client.update_user(osu_id, track_mode)
             
             # 准备格式化参数
-            stats = update_response.update
+            stats = update_response.stats
             format_params = {
                 "username": update_response.username,
                 "mode": validated_mode.upper(),
