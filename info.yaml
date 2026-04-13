@@ -16,6 +16,20 @@ link:
 
     ⏰ 此操作将在 5 分钟后超时
   
+  auth_flow_sanitized: |
+    🎮 OSU 账号关联流程
+
+    ⚠️ 当前平台限制发送外部链接，请手动还原链接中的 [.] 为 .
+    请按以下步骤操作：
+    1️⃣ 将下方链接中的 [.] 替换为 . 后在浏览器中打开
+    🔗 {auth_url}
+
+    2️⃣ 完成授权后，浏览器会跳转到一个新页面
+    3️⃣ 将浏览器地址栏的完整 URL 复制并发送给我
+       （URL 包含类似 ?code=xxxxx 的授权码）
+
+    ⏰ 此操作将在 5 分钟后超时
+  
   success: |
     ✅ 账号关联成功！
     🎮 OSU 用户: {username} (ID: {osu_user_id})
@@ -23,8 +37,8 @@ link:
     🎯 现在可以使用 OSU 相关功能了！
   
   already_linked: |
-    ❌ 您的账号已经关联了 OSU 账号 ID: {osu_id}
-    如需重新关联，请先使用 /osu unlink 解除关联。
+    ⚠️ 您的账号已经关联了 OSU 账号 ID: {osu_id}
+    继续操作将重新认证并更新权限。
   
   config_incomplete: |
     ❌ OSU OAuth 配置不完整，请联系管理员配置 osu_client_id 和 osu_client_secret。
@@ -72,6 +86,14 @@ batch_query:
   
   cancelled: |
     ❌ 已取消批量查询
+
+  no_ids: "❌ 请提供至少一个{type}ID"
+
+  too_many: "❌ 最多支持同时查询 {max} 个{type}，您提供了 {count} 个"
+
+  invalid_ids: "⚠️ 以下{type}ID无效已跳过: {ids}（剩余有效: {valid_count} 个）"
+
+  no_valid_ids: "❌ 没有有效的{type}ID，请重新输入"
   
   timeout: |
     ⏰ 输入超时（5分钟），批量查询已取消
@@ -99,7 +121,6 @@ user:
     🌐 {country_code} | 📈 全球排名: #{global_rank} | 📈 国内排名: #{country_rank}
     🎮 模式: {mode} | 🎯 PP: {pp} | 🏆 等级: {level}
     📈 准确率: {accuracy}% | プレイ回数: {play_count}
-    🔗 个人主页: https://osu.ppy.sh/users/{user_id}
   statistics: |
     📊 统计数据
     SS/SSH: {ss_ssh_count} | S/SH: {s_sh_count} | A: {a_count}
@@ -135,6 +156,24 @@ beatmap:
     ❌ 请提供谱面集ID
     用法: /osu mapset <谱面集ID>
     示例: /osu mapset 41823
+
+  invalid_id: "❌ 无效的谱面ID: {id}，谱面ID必须是数字"
+
+  invalid_mapset_id: "❌ 无效的谱面集ID: {id}，谱面集ID必须是数字"
+
+  search_usage: |
+    ❌ 请提供搜索关键词
+    用法: /osu search map <关键词> [单页数量] [页码] [高级搜索]
+    示例: /osu search map sotarks
+
+  search_num_per_page_error: "❌ 单页数量必须在 1-50 之间"
+
+  search_page_num_error: "❌ 页码必须大于等于 1"
+
+  search_no_results: "❌ 没有找到匹配的谱面"
+
+  search_overview: "🔍 {type}结果: 共 {total} 个，第 {page}/{total_pages} 页（本页 {count} 个）"
+
   info: |
     🎵 {title}
     🧑‍🎨 Artist: {artist} | 谱师: {creator}
@@ -143,7 +182,6 @@ beatmap:
     🕒 时长: {total_length}s | Drain时长: {hit_length}s
     CS: {cs} | AR: {ar} | OD: {od} | HP: {hp}
     ✅ 状态: {status} | 💔 Fail次数: {fail_count} | ▶️ Play次数: {play_count}
-    🔗 谱面链接: https://osu.ppy.sh/b/{beatmap_id}
   
   # 格式化谱面信息的模板
   format:
@@ -199,7 +237,11 @@ friend:
 # 通用提示信息
 common:
   loading: "🔄 正在获取{type}信息..."
-  querying: "🔄 正在查询{target}的信息..."
+  querying: "🔄 正在查询 {count} 个{type}的信息..."
+  querying_user: "🔄 正在查询用户 {user} 的信息..."
+  querying_beatmap: "🔄 正在查询谱面 {id} 的信息..."
+  querying_beatmapset: "🔄 正在查询谱面集 {id} 的信息..."
+  uploading: "🔄 正在上传您的 {mode} 模式成绩到 OSU!track..."
   processing: "🔄 正在处理授权信息..."
   param_error: "❌ 参数错误: {error}"
   error_generic: |
@@ -219,7 +261,7 @@ common:
     支持的类型: {types}
     或者不指定类型进行自动检测
 
-  cancel: "❌ 操作已取消"
+  cancel: "❌ 已取消{type}"
   
 update:
   uploading: "🔄 正在上传您的 {mode} 模式成绩到 OSU!track..."
@@ -232,7 +274,121 @@ update:
       PP: {pp_change}
   param_error: "❌ 参数错误: {error}"
 
-# ... 其他部分 ...
+# 成绩相关信息
+scores:
+  empty: "❌ 没有找到{type}数据"
+  best_header: "🏆 最佳成绩 ({mode} 模式，共 {count} 条)"
+  recent_header: "🕐 最近成绩 ({mode} 模式，共 {count} 条)"
+  beatmap_scores_header: "🏅 谱面 {id} 排行榜 (前 {count} 名)"
+  user_score_header: "🎯 谱面 {id} 个人成绩 (排名 #{position})"
+  scores_usage: |
+    ❌ 请提供谱面ID
+    用法: /osu scores <谱面ID> [模式]
+    示例: /osu scores 129891 osu
+  score_usage: |
+    ❌ 请提供谱面ID
+    用法: /osu score <谱面ID> [模式]
+    示例: /osu score 129891 osu
+  format:
+    header: "{prefix}🎵 谱面ID: {beatmap_id} | 评级: {rank}"
+    pp: "  💎 PP: {pp}"
+    accuracy: "  🎯 准确率: {accuracy}%"
+    combo: "  🔗 最大连击: {combo}"
+    mods: "  🔧 Mods: {mods}"
+    score: "  📊 分数: {score}"
+    time: "  🕐 时间: {time}"
+
+# 历史巅峰相关信息
+peak:
+  header: "📈 历史巅峰 ({mode} 模式)"
+  best_rank: "  🌐 最佳全球排名: #{rank} ({time})"
+  best_accuracy: "  🎯 最佳准确率: {accuracy}% ({time})"
+
+# 排行榜相关信息
+ranking:
+  header: "🏆 {mode} 模式 - {type} 排行榜 (前 {count} 名)"
+  entry: "  {rank}. {username} | PP: {pp} | 准确率: {accuracy}% | 游戏次数: {play_count}"
+  invalid_type: |
+    ❌ 无效的排行榜类型
+    支持的类型: performance, score, charts, country
+
+# 比赛相关信息
+match:
+  usage: |
+    ❌ 请提供比赛ID
+    用法: /osu match <比赛ID>
+    示例: /osu match 12345
+  header: |
+    🏟️ 比赛: {name}
+    🆔 ID: {id}
+    🕐 开始: {start_time}
+    🏁 结束: {end_time}
+  games_header: "\n🎮 游戏记录 (共 {count} 局，显示最近 5 局):"
+  game_entry: "  • 谱面: {beatmap} (ID: {beatmap_id}) | 玩家: {player_count} | Mods: {mods}"
+
+# 多人房间相关信息
+mp:
+  list_header: "🏠 多人房间列表 (共 {count} 个)"
+  list_entry: "  {rank}. {name} (ID: {id}) | 类型: {type} | 活跃: {active}"
+  room_header: |
+    🏠 房间: {name}
+    🆔 ID: {id}
+    📋 类型: {type}
+    ✅ 活跃: {active}
+  room_host: "  👑 房主: {username}"
+  playlist_header: "\n🎵 播放列表 ({count} 首):"
+
+# 新闻相关信息
+news:
+  list_header: "📰 osu! 新闻 (最新 {count} 条)"
+  list_entry: "  {rank}. {title}\n     ✍️ {author} | 📅 {published_at} | 🆔 {news_id}"
+  list_footer: "\n💡 使用 /osu news <文章ID或slug> 查看详情"
+  article_header: |
+    📰 {title}
+    ✍️ 作者: {author}
+    📅 发布时间: {published_at}
+
+# Wiki 相关信息
+wiki:
+  usage: |
+    ❌ 请提供 Wiki 页面路径
+    用法: /osu wiki <路径>
+    示例: /osu wiki Game_mode
+  header: |
+    📖 osu! Wiki - {title}
+    📂 路径: {path}
+
+# 更新日志相关信息
+changelog:
+  header: "📋 osu! 更新日志 (最新 {count} 个版本)"
+  build_entry: "\n  🔖 {version} ({stream}) - {date} [{entry_count} 项更新]"
+
+# 团队相关信息
+team:
+  usage: |
+    ❌ 请提供团队ID
+    用法: /osu team <团队ID>
+    示例: /osu team 1
+  header: |
+    👥 团队: {name}
+    🏷️ 简称: {short_name}
+    👤 成员数: {member_count}
+  members_header: "\n📋 成员列表:"
+
+# 谱面包相关信息
+packs:
+  header: "📦 谱面包列表 (共 {count} 个)"
+  entry: "  {rank}. [{tag}] {name} ({date})"
+
+# 收藏相关信息
+fav:
+  header: "❤️ 收藏谱面集 (共 {count} 个)"
+
+# 事件流相关信息
+events:
+  header: "📋 osu! 事件流 (最新 {count} 条)"
+
+# 回调相关信息
 callback:
   invalid_url: |
     ❌ 无效的回调 URL，请确保 URL 中包含授权码 (code=xxxxx)

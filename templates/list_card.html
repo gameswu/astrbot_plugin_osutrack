@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: transparent;
+    width: 480px;
+  }
+  .card {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    border-radius: 16px;
+    padding: 24px;
+    color: #fff;
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: -40%;
+    right: -25%;
+    width: 260px;
+    height: 260px;
+    background: radial-gradient(circle, rgba(100,181,246,0.1) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .title-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    position: relative;
+    z-index: 1;
+  }
+  .title-bar h2 {
+    font-size: 18px;
+    font-weight: 700;
+    color: #ff66aa;
+  }
+  .title-bar .subtitle {
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+  }
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative;
+    z-index: 1;
+  }
+  .list-item {
+    background: rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 12px 14px;
+    border: 1px solid rgba(255,255,255,0.08);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .list-index {
+    font-size: 14px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.25);
+    min-width: 22px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .list-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .list-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .list-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .list-sub {
+    font-size: 12px;
+    color: rgba(255,255,255,0.45);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .list-badge {
+    flex-shrink: 0;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.6);
+  }
+  .list-badge.highlight {
+    background: rgba(255,102,170,0.15);
+    color: #ff66aa;
+  }
+  .more-hint {
+    text-align: center;
+    font-size: 12px;
+    color: rgba(255,255,255,0.3);
+    margin-top: 8px;
+    position: relative;
+    z-index: 1;
+  }
+  .footer {
+    text-align: right;
+    margin-top: 14px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.3);
+    position: relative;
+    z-index: 1;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="title-bar">
+    <h2>{{ title }}</h2>
+    {% if subtitle %}<span class="subtitle">{{ subtitle }}</span>{% endif %}
+  </div>
+
+  <div class="list">
+    {% for item in items %}
+    <div class="list-item">
+      <div class="list-index">{{ item.index }}</div>
+      {% if item.icon %}<div class="list-icon">{{ item.icon }}</div>{% endif %}
+      <div class="list-content">
+        <div class="list-title">{{ item.title }}</div>
+        {% if item.sub %}<div class="list-sub">{{ item.sub }}</div>{% endif %}
+      </div>
+      {% if item.badge %}<div class="list-badge {% if item.badge_highlight %}highlight{% endif %}">{{ item.badge }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if more %}
+  <div class="more-hint">{{ more }}</div>
+  {% endif %}
+
+  <div class="footer">osu! · Powered by gameswu</div>
+</div>
+</body>
+</html>

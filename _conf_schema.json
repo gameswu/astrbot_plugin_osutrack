@@ -1,14 +1,58 @@
 {
     "client_id": {
         "type": "int",
-        "description": "你的 OSU! API 客户端 ID"
+        "description": "osu! API Client ID",
+        "hint": "前往 https://osu.ppy.sh/home/account/edit#oauth 创建 OAuth 应用获取",
+        "obvious_hint": true,
+        "default": 0
     },
     "client_secret": {
         "type": "string",
-        "description": "你的 OSU! API 客户端密钥"
+        "description": "osu! API Client Secret",
+        "hint": "创建 OAuth 应用后获取的密钥，请妥善保管",
+        "obvious_hint": true,
+        "default": ""
     },
     "redirect_uri": {
         "type": "string",
-        "description": "你的 OSU! API 重定向 URI"
+        "description": "OAuth 回调地址",
+        "hint": "需与 osu! OAuth 应用中配置的 Callback URL 一致",
+        "default": "http://localhost:7210/"
+    },
+    "use_image_output": {
+        "type": "bool",
+        "description": "图片输出模式",
+        "hint": "开启后命令输出将优先使用精美的图片卡片，关闭后始终使用纯文本",
+        "default": true
+    },
+    "news_push_enabled": {
+        "type": "bool",
+        "description": "新闻自动推送",
+        "hint": "开启后将自动检测 osu! 新闻并推送到指定会话",
+        "default": false
+    },
+    "news_push_mode": {
+        "type": "string",
+        "description": "推送模式",
+        "hint": "realtime: 发现新新闻立即推送; scheduled: 在指定时间统一推送",
+        "default": "realtime"
+    },
+    "news_push_cron": {
+        "type": "string",
+        "description": "定时推送时间 (cron 表达式)",
+        "hint": "仅在推送模式为 scheduled 时生效，例如 '0 8 * * *' 表示每天早上 8 点",
+        "default": "0 8 * * *"
+    },
+    "news_push_interval": {
+        "type": "int",
+        "description": "新闻检查间隔 (分钟)",
+        "hint": "每隔多少分钟检查一次是否有新的新闻，建议 5-30",
+        "default": 10
+    },
+    "news_push_sessions": {
+        "type": "list",
+        "description": "推送目标会话列表",
+        "hint": "填写要推送新闻的会话标识，格式: 平台名:消息类型:会话ID，例如 qq_official:group:123456。可通过在目标群聊中发送 /osu news_subscribe 自动添加",
+        "default": []
     }
 }

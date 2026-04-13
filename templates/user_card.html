@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: transparent;
+    width: 480px;
+  }
+  .card {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    border-radius: 16px;
+    padding: 28px;
+    color: #fff;
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    right: -30%;
+    width: 300px;
+    height: 300px;
+    background: radial-gradient(circle, rgba(255,102,170,0.15) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+    position: relative;
+    z-index: 1;
+  }
+  .avatar {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: 3px solid #ff66aa;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+  .user-info h1 {
+    font-size: 24px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 4px;
+  }
+  .user-meta {
+    font-size: 13px;
+    color: rgba(255,255,255,0.6);
+  }
+  .user-meta .country-flag {
+    font-size: 16px;
+    margin-right: 4px;
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 4px;
+  }
+  .status.online { background: rgba(76,175,80,0.3); color: #81c784; }
+  .status.offline { background: rgba(158,158,158,0.3); color: #bdbdbd; }
+  .supporter-badge {
+    display: inline-block;
+    background: linear-gradient(135deg, #ff66aa, #ffb74d);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-left: 6px;
+    color: #fff;
+  }
+  .divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,102,170,0.4), transparent);
+    margin: 16px 0;
+  }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    position: relative;
+    z-index: 1;
+  }
+  .stat-item {
+    background: rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 12px 14px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .stat-item.highlight {
+    background: rgba(255,102,170,0.1);
+    border-color: rgba(255,102,170,0.2);
+  }
+  .stat-label {
+    font-size: 11px;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .stat-value {
+    font-size: 20px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .stat-value.pp { color: #ff66aa; }
+  .stat-value.rank { color: #64b5f6; }
+  .stat-value.accuracy { color: #81c784; }
+  .stat-value.combo { color: #ffb74d; }
+  .stat-suffix {
+    font-size: 13px;
+    font-weight: 400;
+    color: rgba(255,255,255,0.5);
+    margin-left: 2px;
+  }
+  .grade-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    position: relative;
+    z-index: 1;
+  }
+  .grade-item {
+    flex: 1;
+    text-align: center;
+    background: rgba(255,255,255,0.06);
+    border-radius: 8px;
+    padding: 8px 4px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .grade-rank {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .grade-rank.ssh { color: #ffd700; }
+  .grade-rank.ss { color: #ffd700; }
+  .grade-rank.sh { color: #c0c0c0; }
+  .grade-rank.s { color: #c0c0c0; }
+  .grade-rank.a { color: #81c784; }
+  .grade-count {
+    font-size: 12px;
+    color: rgba(255,255,255,0.5);
+  }
+  .footer {
+    text-align: right;
+    margin-top: 14px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.3);
+    position: relative;
+    z-index: 1;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    {% if avatar_url %}
+    <img class="avatar" src="{{ avatar_url }}" alt="avatar">
+    {% endif %}
+    <div class="user-info">
+      <h1>{{ username }}{% if is_supporter %}<span class="supporter-badge">♥ Supporter</span>{% endif %}</h1>
+      <div class="user-meta">
+        {% if country_code %}<span class="country-flag">{{ country_code }}</span>{% endif %}
+        ID: {{ user_id }}
+      </div>
+      <span class="status {{ 'online' if is_online else 'offline' }}">
+        {{ '● 在线' if is_online else '● 离线' }}
+      </span>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="stats-grid">
+    {% if pp is not none %}
+    <div class="stat-item highlight">
+      <div class="stat-label">PP</div>
+      <div class="stat-value pp">{{ pp }}<span class="stat-suffix">pp</span></div>
+    </div>
+    {% endif %}
+    {% if global_rank is not none %}
+    <div class="stat-item">
+      <div class="stat-label">全球排名</div>
+      <div class="stat-value rank">#{{ global_rank }}</div>
+    </div>
+    {% endif %}
+    {% if country_rank is not none %}
+    <div class="stat-item">
+      <div class="stat-label">国家排名</div>
+      <div class="stat-value rank">#{{ country_rank }}</div>
+    </div>
+    {% endif %}
+    {% if accuracy is not none %}
+    <div class="stat-item">
+      <div class="stat-label">准确率</div>
+      <div class="stat-value accuracy">{{ accuracy }}<span class="stat-suffix">%</span></div>
+    </div>
+    {% endif %}
+    {% if play_count is not none %}
+    <div class="stat-item">
+      <div class="stat-label">游戏次数</div>
+      <div class="stat-value">{{ play_count }}</div>
+    </div>
+    {% endif %}
+    {% if max_combo is not none %}
+    <div class="stat-item">
+      <div class="stat-label">最大连击</div>
+      <div class="stat-value combo">{{ max_combo }}<span class="stat-suffix">x</span></div>
+    </div>
+    {% endif %}
+    {% if ranked_score is not none %}
+    <div class="stat-item">
+      <div class="stat-label">Ranked 分数</div>
+      <div class="stat-value">{{ ranked_score }}</div>
+    </div>
+    {% endif %}
+    {% if total_score is not none %}
+    <div class="stat-item">
+      <div class="stat-label">总分数</div>
+      <div class="stat-value">{{ total_score }}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if grades %}
+  <div class="grade-row">
+    <div class="grade-item">
+      <div class="grade-rank ssh">SS+</div>
+      <div class="grade-count">{{ grades.ssh }}</div>
+    </div>
+    <div class="grade-item">
+      <div class="grade-rank ss">SS</div>
+      <div class="grade-count">{{ grades.ss }}</div>
+    </div>
+    <div class="grade-item">
+      <div class="grade-rank sh">S+</div>
+      <div class="grade-count">{{ grades.sh }}</div>
+    </div>
+    <div class="grade-item">
+      <div class="grade-rank s">S</div>
+      <div class="grade-count">{{ grades.s }}</div>
+    </div>
+    <div class="grade-item">
+      <div class="grade-rank a">A</div>
+      <div class="grade-count">{{ grades.a }}</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="footer">osu! · Powered by gameswu</div>
+</div>
+</body>
+</html>

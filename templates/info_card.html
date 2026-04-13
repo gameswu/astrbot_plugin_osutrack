@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: transparent;
+    width: 480px;
+  }
+  .card {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    border-radius: 16px;
+    padding: 24px;
+    color: #fff;
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: -40%;
+    left: -20%;
+    width: 240px;
+    height: 240px;
+    background: radial-gradient(circle, rgba(206,147,216,0.1) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .title-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+    position: relative;
+    z-index: 1;
+  }
+  .title-icon {
+    font-size: 28px;
+  }
+  .title-text h2 {
+    font-size: 18px;
+    font-weight: 700;
+    color: #ff66aa;
+  }
+  .title-text .subtitle {
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+  }
+  .divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,102,170,0.3), transparent);
+    margin: 14px 0;
+    position: relative;
+    z-index: 1;
+  }
+  .info-section {
+    position: relative;
+    z-index: 1;
+    margin-bottom: 14px;
+  }
+  .info-section:last-of-type { margin-bottom: 0; }
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: rgba(255,255,255,0.4);
+    margin-bottom: 8px;
+  }
+  .info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .info-grid.cols-3 {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+  .info-grid.cols-1 {
+    grid-template-columns: 1fr;
+  }
+  .info-box {
+    background: rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 12px 14px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .info-box.highlight {
+    background: rgba(255,102,170,0.1);
+    border-color: rgba(255,102,170,0.2);
+  }
+  .info-box .label {
+    font-size: 11px;
+    color: rgba(255,255,255,0.45);
+    margin-bottom: 4px;
+  }
+  .info-box .value {
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .info-box .value.pp { color: #ff66aa; }
+  .info-box .value.rank { color: #64b5f6; }
+  .info-box .value.acc { color: #81c784; }
+  .info-box .value.combo { color: #ffb74d; }
+  .info-box .value.score { color: #ce93d8; }
+  .info-box .sub {
+    font-size: 11px;
+    color: rgba(255,255,255,0.35);
+    margin-top: 2px;
+  }
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-row .label {
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+  }
+  .info-row .value {
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+  }
+  .tag-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    position: relative;
+    z-index: 1;
+  }
+  .tag {
+    padding: 3px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.7);
+  }
+  .tag.pink { background: rgba(255,102,170,0.15); color: #ff66aa; border-color: rgba(255,102,170,0.25); }
+  .tag.blue { background: rgba(100,181,246,0.15); color: #64b5f6; border-color: rgba(100,181,246,0.25); }
+  .tag.green { background: rgba(76,175,80,0.15); color: #81c784; border-color: rgba(76,175,80,0.25); }
+  .tag.orange { background: rgba(255,183,77,0.15); color: #ffb74d; border-color: rgba(255,183,77,0.25); }
+  .rank-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 800;
+  }
+  .rank-badge.XH, .rank-badge.X { background: linear-gradient(135deg, #ffd700, #ffb74d); color: #1a1a2e; }
+  .rank-badge.SH, .rank-badge.S { background: linear-gradient(135deg, #c0c0c0, #e0e0e0); color: #1a1a2e; }
+  .rank-badge.A { background: rgba(76,175,80,0.3); color: #81c784; }
+  .rank-badge.B { background: rgba(66,133,244,0.3); color: #64b5f6; }
+  .rank-badge.C { background: rgba(156,39,176,0.3); color: #ce93d8; }
+  .rank-badge.D { background: rgba(244,67,54,0.3); color: #e57373; }
+  .rank-badge.F { background: rgba(158,158,158,0.2); color: #9e9e9e; }
+  .member-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    position: relative;
+    z-index: 1;
+  }
+  .member-chip {
+    padding: 4px 10px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 14px;
+    font-size: 12px;
+    color: rgba(255,255,255,0.7);
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .footer {
+    text-align: right;
+    margin-top: 14px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.3);
+    position: relative;
+    z-index: 1;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="title-bar">
+    {% if icon %}<div class="title-icon">{{ icon }}</div>{% endif %}
+    <div class="title-text">
+      <h2>{{ title }}</h2>
+      {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    </div>
+  </div>
+
+  {% if tags %}
+  <div class="tag-row">
+    {% for tag in tags %}
+    <span class="tag {{ tag.color or '' }}">{{ tag.text }}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if rank_badge %}
+  <div style="text-align:center;margin-bottom:14px;position:relative;z-index:1;">
+    <span class="rank-badge {{ rank_badge }}">{{ rank_badge }}</span>
+  </div>
+  {% endif %}
+
+  {% for section in sections %}
+  {% if section.type == 'grid' %}
+  <div class="info-section">
+    {% if section.label %}<div class="section-label">{{ section.label }}</div>{% endif %}
+    <div class="info-grid {{ section.cols_class or '' }}">
+      {% for box in section.items %}
+      <div class="info-box {{ 'highlight' if box.highlight else '' }}">
+        <div class="label">{{ box.label }}</div>
+        <div class="value {{ box.color or '' }}">{{ box.value }}</div>
+        {% if box.sub %}<div class="sub">{{ box.sub }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% elif section.type == 'rows' %}
+  <div class="info-section">
+    {% if section.label %}<div class="section-label">{{ section.label }}</div>{% endif %}
+    {% for row in section.items %}
+    <div class="info-row">
+      <span class="label">{{ row.label }}</span>
+      <span class="value">{{ row.value }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% elif section.type == 'members' %}
+  <div class="info-section">
+    {% if section.label %}<div class="section-label">{{ section.label }}</div>{% endif %}
+    <div class="member-list">
+      {% for m in section.items %}
+      <span class="member-chip">{{ m }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+  {% if not loop.last %}<div class="divider"></div>{% endif %}
+  {% endfor %}
+
+  <div class="footer">osu! · Powered by gameswu</div>
+</div>
+</body>
+</html>
