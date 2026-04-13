@@ -1,0 +1,84 @@
+name: Bug Report
+description: 提交一个 Bug 报告
+title: "[Bug] "
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你提交 Bug 报告！请尽可能详细地填写以下信息，以便我们快速定位和修复问题。
+
+  - type: input
+    id: astrbot-version
+    attributes:
+      label: AstrBot 版本
+      description: 你正在使用的 AstrBot 版本号
+      placeholder: "例如: 4.9.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 机器人使用平台
+      description: 你使用的消息平台
+      options:
+        - QQ 官方机器人
+        - OneBot v11
+        - 企业微信
+        - 个人微信
+        - Telegram
+        - Discord
+        - 钉钉
+        - 飞书
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: platform-other
+    attributes:
+      label: 其他平台（如选择了"其他"请填写）
+      description: 如果上面选择了"其他"，请在此填写具体的平台名称
+      placeholder: "例如: Matrix"
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 清晰简洁地描述你遇到的问题
+      placeholder: 描述你遇到了什么问题...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现方法
+      description: 提供能稳定复现该问题的步骤
+      placeholder: |
+        1. 执行命令 `/osu ...`
+        2. ...
+        3. 出现错误
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: 粘贴相关的错误日志或控制台输出
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 其他描述
+      description: 补充任何你认为有助于排查问题的信息（截图、配置等）
+    validations:
+      required: false
