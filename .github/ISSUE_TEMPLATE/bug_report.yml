@@ -18,6 +18,15 @@ body:
     validations:
       required: true
 
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本
+      description: 你正在使用的 osu! 插件版本号
+      placeholder: "例如: 0.3.1"
+    validations:
+      required: true
+
   - type: dropdown
     id: platform
     attributes:

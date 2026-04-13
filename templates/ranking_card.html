@@ -6,14 +6,15 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    background: transparent;
-    width: 480px;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #fff;
+    overflow: hidden;
   }
   .card {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-    border-radius: 16px;
+    min-height: 100vh;
     padding: 24px;
-    color: #fff;
+    display: flex;
+    flex-direction: column;
     position: relative;
     overflow: hidden;
   }
@@ -116,7 +117,8 @@
   }
   .footer {
     text-align: right;
-    margin-top: 14px;
+    margin-top: auto;
+    padding-top: 14px;
     font-size: 11px;
     color: rgba(255,255,255,0.3);
     position: relative;

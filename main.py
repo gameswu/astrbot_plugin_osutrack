@@ -5,6 +5,7 @@ from astrbot.api.util import session_waiter, SessionController
 import astrbot.api.message_components as Comp
 
 import os
+import re
 import json
 import urllib.parse
 import asyncio
@@ -218,14 +219,20 @@ class OsuTrackPlugin(Star):
         parts.append(f"📌 {title}")
         parts.append(f"✍️ {author} | 📅 {published_at[:10] if published_at else '-'}")
         if preview:
-            text = preview[:300]
-            if len(preview) > 300:
-                text += "..."
-            parts.append(f"\n{text}")
+            parts.append(f"\n{preview}")
         if slug:
             parts.append(f"\n🔗 https://osu.ppy.sh/home/news/{slug}")
 
-        message = MessageChain([Comp.Plain("\n".join(parts))])
+        img_url = await self._render_content_card(
+            title, preview or "",
+            author=author, date=published_at[:10] if published_at else "-",
+            link=f"https://osu.ppy.sh/home/news/{slug}" if slug else None,
+        )
+
+        if img_url:
+            message = MessageChain([Comp.Image.fromURL(img_url)])
+        else:
+            message = MessageChain([Comp.Plain("\n".join(parts))])
 
         for session_str in self._news_push_sessions:
             try:
@@ -272,7 +279,11 @@ class OsuTrackPlugin(Star):
         else:
             final_text = self.help_data.get("general", "帮助信息不可用。")
 
-        await event.send(MessageChain([Comp.Plain(final_text)]))
+        img_url = await self._render_content_card("❓ OSU! 插件帮助", final_text, category="Help")
+        if img_url:
+            await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+        else:
+            await event.send(MessageChain([Comp.Plain(final_text)]))
         event.stop_event()
 
     # ================================================================
@@ -333,7 +344,7 @@ class OsuTrackPlugin(Star):
                         return
 
                     await event.send(MessageChain([Comp.Plain(get_info("common.processing"))]))
-                    await self.oauth.exchange_code(auth_code, platform_id)
+                    await self.oauth.exchange_code(auth_code, platform_id, scopes=all_scopes)
 
                     user_info = await self.oauth.get_user_info(platform_id)
                     if not user_info:
@@ -353,6 +364,14 @@ class OsuTrackPlugin(Star):
                             get_info("link.success", username=username,
                                      osu_user_id=osu_uid, platform_id=platform_id))]))
                         logger.info(f"{'重新' if is_relink else ''}关联成功: {username}({osu_uid}) <-> {platform_id}")
+                        # 发送用户卡片
+                        try:
+                            full_user = await self.osu.get_user(platform_id, osu_uid)
+                            img_url = await self._render_user_card(full_user)
+                            if img_url:
+                                await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+                        except Exception:
+                            pass  # 卡片渲染失败不影响绑定流程
                     else:
                         self.oauth.remove_token(platform_id)
                         await event.send(MessageChain([Comp.Plain(
@@ -527,12 +546,16 @@ class OsuTrackPlugin(Star):
                     return
 
                 for i, u in enumerate(users_info, 1):
-                    avatar_url, text = self._format_user_info(u)
-                    chain: list = []
-                    if avatar_url:
-                        chain.append(Comp.Image.fromURL(avatar_url))
-                    chain.append(Comp.Plain(f"【{i}/{len(users_info)}】\n{text}"))
-                    await event.send(MessageChain(chain))
+                    img_url = await self._render_user_card(u)
+                    if img_url:
+                        await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+                    else:
+                        avatar_url, text = self._format_user_info(u)
+                        chain: list = []
+                        if avatar_url:
+                            chain.append(Comp.Image.fromURL(avatar_url))
+                        chain.append(Comp.Plain(f"【{i}/{len(users_info)}】\n{text}"))
+                        await event.send(MessageChain(chain))
                     if i < len(users_info):
                         await asyncio.sleep(0.5)
 
@@ -568,13 +591,27 @@ class OsuTrackPlugin(Star):
 
             update_resp = await self.osutrack.update_user(osu_id, track_mode)
 
-            await event.send(MessageChain([Comp.Plain(get_info(
+            result_text = get_info(
                 "update.success",
                 username=update_resp.username,
                 mode=validated_mode.upper(),
                 new_hs_count=len(update_resp.newhs),
                 pp_change=f"{update_resp.pp_rank:+.2f}" if update_resp.pp_rank is not None else "-",
-            ))]))
+            )
+            img_url = await self._render_info_card(
+                "✅ 成绩上传成功",
+                [{"type": "grid", "items": [
+                    {"label": "玩家", "value": update_resp.username},
+                    {"label": "模式", "value": validated_mode.upper()},
+                    {"label": "新 HS", "value": str(len(update_resp.newhs)), "color": "pp"},
+                    {"label": "PP 变化", "value": f"{update_resp.pp_rank:+.2f}" if update_resp.pp_rank is not None else "-", "color": "rank"},
+                ]}],
+                icon="📊"
+            )
+            if img_url:
+                await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+            else:
+                await event.send(MessageChain([Comp.Plain(result_text)]))
         except ValueError as e:
             await event.send(MessageChain([Comp.Plain(get_info("update.param_error", error=str(e)))]))
         except Exception as e:
@@ -692,12 +729,18 @@ class OsuTrackPlugin(Star):
                 for i, mid in enumerate(valid_ids, 1):
                     try:
                         bs = await self.osu.get_beatmapset(platform_id, mid)
-                        cover_url, text = self._format_beatmapset_info(bs)
-                        chain: list = []
-                        if cover_url:
-                            chain.append(Comp.Image.fromURL(cover_url))
-                        chain.append(Comp.Plain(f"【{i}/{len(valid_ids)}】\n{text}"))
-                        await event.send(MessageChain(chain))
+                        img_url = await self._render_beatmap_card(bs=bs)
+                        if img_url:
+                            await event.send(MessageChain([
+                                Comp.Plain(f"【{i}/{len(valid_ids)}】"),
+                                Comp.Image.fromURL(img_url)]))
+                        else:
+                            cover_url, text = self._format_beatmapset_info(bs)
+                            chain: list = []
+                            if cover_url:
+                                chain.append(Comp.Image.fromURL(cover_url))
+                            chain.append(Comp.Plain(f"【{i}/{len(valid_ids)}】\n{text}"))
+                            await event.send(MessageChain(chain))
                         ok_count += 1
                         if i < len(valid_ids):
                             await asyncio.sleep(0.5)
@@ -1345,9 +1388,9 @@ class OsuTrackPlugin(Star):
                 slug = data.get("slug", "")
                 link = f"https://osu.ppy.sh/home/news/{slug}" if slug else None
                 img_url = await self._render_content_card(
-                    data.get("title", "?"), content_html or preview[:800],
+                    data.get("title", "?"), content_html or preview,
                     author=data.get("author"), date=data.get("published_at", "-")[:10],
-                    link=link, truncated=not content_html and len(preview) > 800,
+                    link=link,
                     raw_html=bool(content_html),
                 )
                 if img_url:
@@ -1358,9 +1401,7 @@ class OsuTrackPlugin(Star):
                                       author=data.get("author", "?"),
                                       published_at=data.get("published_at", "-"))]
                     if preview:
-                        parts.append(f"\n{preview[:500]}")
-                        if len(preview) > 500:
-                            parts.append("...")
+                        parts.append(f"\n{preview}")
                     if slug:
                         parts.append(f"\n🔗 https://osu.ppy.sh/home/news/{slug}")
                     await event.send(MessageChain([Comp.Plain("\n".join(parts))]))
@@ -1461,22 +1502,17 @@ class OsuTrackPlugin(Star):
             except ImportError:
                 content_html = ""
             # 简化 markdown 内容为纯文本预览（文本 fallback 用）
-            import re
             plain = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', markdown)
             plain = re.sub(r'[#*_`>~]', '', plain)
             plain = re.sub(r'\n{3,}', '\n\n', plain).strip()
 
             parts = [get_info("wiki.header", title=title, path=path)]
-            preview = plain[:1000]
-            parts.append(preview)
-            if len(plain) > 1000:
-                parts.append(f"\n... (内容过长已截断)")
+            parts.append(plain)
             parts.append(f"\n🔗 https://osu.ppy.sh/wiki/zh/{path}")
             # 尝试文转图
             link = f"https://osu.ppy.sh/wiki/zh/{path}"
             img_url = await self._render_content_card(
-                title, content_html or preview, category="Wiki", link=link,
-                truncated=not content_html and len(plain) > 1000,
+                title, content_html or plain, category="Wiki", link=link,
                 raw_html=bool(content_html),
             )
             if img_url:
@@ -1770,8 +1806,13 @@ class OsuTrackPlugin(Star):
         try:
             processed: str | int = int(username) if username.isdigit() else username
             user_info = await self.osu.get_user(platform_id, processed)
-            _, text = self._format_user_info(user_info)
-            yield event.plain_result(text)
+            img_url = await self._render_user_card(user_info)
+            if img_url:
+                await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+                yield event.plain_result("查询成功，玩家信息已通过图片发送。")
+            else:
+                _, text = self._format_user_info(user_info)
+                yield event.plain_result(text)
         except Exception as e:
             yield event.plain_result(f"查询玩家 {username} 失败: {e}")
 
@@ -1788,7 +1829,12 @@ class OsuTrackPlugin(Star):
             return
         try:
             bm = await self.osu.get_beatmap(platform_id, int(beatmap_id))
-            yield event.plain_result(self._format_beatmap_info(bm))
+            img_url = await self._render_beatmap_card(bm=bm)
+            if img_url:
+                await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+                yield event.plain_result("查询成功，谱面信息已通过图片发送。")
+            else:
+                yield event.plain_result(self._format_beatmap_info(bm))
         except Exception as e:
             yield event.plain_result(f"查询谱面 {beatmap_id} 失败: {e}")
 
@@ -1816,7 +1862,12 @@ class OsuTrackPlugin(Star):
             lines = [f"🏆 {user_info.username} 的最佳成绩 ({mode}):"]
             for i, s in enumerate(scores, 1):
                 lines.append(self._format_score(s, index=i))
-            yield event.plain_result("\n\n".join(lines))
+            img_url = await self._render_score_card(scores, f"🏆 {user_info.username} 最佳成绩", user_info.username)
+            if img_url:
+                await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+                yield event.plain_result("查询成功，最佳成绩已通过图片发送。")
+            else:
+                yield event.plain_result("\n\n".join(lines))
         except Exception as e:
             yield event.plain_result(f"查询最佳成绩失败: {e}")
 
@@ -1844,7 +1895,12 @@ class OsuTrackPlugin(Star):
             lines = [f"🕐 {user_info.username} 的最近游玩 ({mode}):"]
             for i, s in enumerate(scores, 1):
                 lines.append(self._format_score(s, index=i))
-            yield event.plain_result("\n\n".join(lines))
+            img_url = await self._render_score_card(scores, f"🕐 {user_info.username} 最近游玩", user_info.username)
+            if img_url:
+                await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+                yield event.plain_result("查询成功，最近成绩已通过图片发送。")
+            else:
+                yield event.plain_result("\n\n".join(lines))
         except Exception as e:
             yield event.plain_result(f"查询最近成绩失败: {e}")
 
@@ -1866,10 +1922,17 @@ class OsuTrackPlugin(Star):
                 yield event.plain_result(f"未找到与「{query}」相关的谱面。")
                 return
             lines = [f"🔍 搜索「{query}」的结果（共 {result.total} 个，显示前 {len(beatmapsets)} 个）:"]
-            for bs in beatmapsets:
+            items = []
+            for i, bs in enumerate(beatmapsets, 1):
                 _, text = self._format_beatmapset_info(bs, show_beatmaps=False)
                 lines.append(text)
-            yield event.plain_result("\n\n".join(lines))
+                items.append({"index": i, "title": f"{bs.artist} - {bs.title}", "sub": f"by {bs.creator}", "icon": "🎵"})
+            img_url = await self._render_list_card(f"🔍 搜索: {query}", items, subtitle=f"共 {result.total} 个")
+            if img_url:
+                await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+                yield event.plain_result("查询成功，搜索结果已通过图片发送。")
+            else:
+                yield event.plain_result("\n\n".join(lines))
         except Exception as e:
             yield event.plain_result(f"搜索谱面失败: {e}")
 
@@ -1900,7 +1963,16 @@ class OsuTrackPlugin(Star):
             score = result.score
             pos = result.position
             text = self._format_score(score)
-            yield event.plain_result(f"🎯 {uname} 在谱面 {beatmap_id} 上的成绩（排名 #{pos}）:\n{text}")
+            img_url = await self._render_info_card(
+                f"🎯 谱面 {beatmap_id} 成绩",
+                [{"type": "rows", "items": [{"label": "玩家", "value": uname}, {"label": "排名", "value": f"#{pos}"}]}],
+                icon="🎯"
+            )
+            if img_url:
+                await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+                yield event.plain_result("查询成功，成绩信息已通过图片发送。")
+            else:
+                yield event.plain_result(f"🎯 {uname} 在谱面 {beatmap_id} 上的成绩（排名 #{pos}）:\n{text}")
         except Exception as e:
             yield event.plain_result(f"查询成绩失败: {e}")
 
@@ -1924,13 +1996,21 @@ class OsuTrackPlugin(Star):
                 return
             type_label = {"performance": "PP", "score": "Score"}.get(type, type)
             lines = [f"🏅 {mode.upper()} {type_label} 排行榜 Top 10:"]
+            columns = [{"label": "玩家"}, {"label": "PP", "right": True}, {"label": "准确率", "right": True}]
+            rows = []
             for i, entry in enumerate(ranking_list, 1):
                 user = entry.get("user", {})
                 name = user.get("username", "?")
                 pp = entry.get("pp", 0)
                 acc = entry.get("hit_accuracy", entry.get("accuracy", 0))
                 lines.append(f"#{i} {name} | PP: {pp:,.0f} | 准确率: {acc:.2f}%")
-            yield event.plain_result("\n".join(lines))
+                rows.append({"rank": i, "cells": [{"value": name, "type": "name"}, {"value": f"{pp:,.0f}", "type": "pp", "right": True}, {"value": f"{acc:.2f}%", "type": "acc", "right": True}]})
+            img_url = await self._render_ranking_card(f"🏅 {mode.upper()} {type_label} 排行榜", columns, rows, subtitle="Top 10")
+            if img_url:
+                await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+                yield event.plain_result("查询成功，排行榜已通过图片发送。")
+            else:
+                yield event.plain_result("\n".join(lines))
         except Exception as e:
             yield event.plain_result(f"查询排行榜失败: {e}")
 
@@ -1947,18 +2027,30 @@ class OsuTrackPlugin(Star):
             yield event.plain_result("用户尚未绑定 osu! 账号或授权已过期，请先使用 /osu link 绑定。")
             return
         try:
-            import re as _re
             data = await self.osu.get_wiki_page(platform_id, locale, path)
             title = data.get("title", path)
             markdown = data.get("markdown", "")
+            # 将 markdown 转换为 HTML
+            try:
+                import markdown as md_lib
+                content_html = md_lib.markdown(markdown, extensions=['tables', 'fenced_code'])
+            except ImportError:
+                content_html = ""
             # Strip markdown formatting for plain text
-            plain = _re.sub(r'!\[.*?\]\(.*?\)', '', markdown)
-            plain = _re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', plain)
-            plain = _re.sub(r'[#*_`~>]', '', plain)
-            plain = _re.sub(r'\n{3,}', '\n\n', plain).strip()
-            if len(plain) > 1500:
-                plain = plain[:1500] + "\n\n...（内容过长已截断）"
-            yield event.plain_result(f"📖 Wiki: {title}\n\n{plain}")
+            plain = re.sub(r'!\[.*?\]\(.*?\)', '', markdown)
+            plain = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', plain)
+            plain = re.sub(r'[#*_`~>]', '', plain)
+            plain = re.sub(r'\n{3,}', '\n\n', plain).strip()
+            link = f"https://osu.ppy.sh/wiki/{locale}/{path}"
+            img_url = await self._render_content_card(
+                title, content_html or plain, category="Wiki", link=link,
+                raw_html=bool(content_html),
+            )
+            if img_url:
+                await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+                yield event.plain_result("查询成功，Wiki 内容已通过图片发送。")
+            else:
+                yield event.plain_result(f"📖 Wiki: {title}\n\n{plain}")
         except Exception as e:
             yield event.plain_result(f"查询 Wiki 失败: {e}")
 
@@ -1985,7 +2077,14 @@ class OsuTrackPlugin(Star):
                 text = f"📰 {title}\n✍️ {author} | 📅 {date}\n\n{preview}"
                 if slug:
                     text += f"\n\n🔗 https://osu.ppy.sh/home/news/{slug}"
-                yield event.plain_result(text)
+                img_url = await self._render_content_card(title, preview or "",
+                                                          author=author, date=date,
+                                                          link=f"https://osu.ppy.sh/home/news/{slug}" if slug else None)
+                if img_url:
+                    await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+                    yield event.plain_result("查询成功，新闻详情已通过图片发送。")
+                else:
+                    yield event.plain_result(text)
             else:
                 data = await self.osu.get_news_listing(platform_id, limit=10)
                 posts = data.get("news_posts", [])
@@ -1993,12 +2092,19 @@ class OsuTrackPlugin(Star):
                     yield event.plain_result("暂无新闻。")
                     return
                 lines = ["📰 osu! 最新新闻:"]
+                items = []
                 for i, post in enumerate(posts[:10], 1):
                     slug = post.get("slug", "")
                     nid = slug or str(post.get("id", "?"))
                     lines.append(f"{i}. {post.get('title', '?')} ({post.get('published_at', '-')[:10]}) [ID: {nid}]")
+                    items.append({"index": i, "title": post.get("title", "?"), "sub": post.get("published_at", "-")[:10], "icon": "📰", "badge": nid})
                 lines.append("\n💡 可通过 ID 或 slug 查看详情")
-                yield event.plain_result("\n".join(lines))
+                img_url = await self._render_list_card("📰 osu! 新闻", items, subtitle=f"共 {len(posts)} 条")
+                if img_url:
+                    await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+                    yield event.plain_result("查询成功，新闻列表已通过图片发送。")
+                else:
+                    yield event.plain_result("\n".join(lines))
         except Exception as e:
             yield event.plain_result(f"查询新闻失败: {e}")
 
@@ -2014,15 +2120,34 @@ class OsuTrackPlugin(Star):
             return
 
         total_pages = (total_results + num_per_page - 1) // num_per_page if total_results > 0 else 1
-        await event.send(MessageChain([Comp.Plain(get_info(
-            "beatmap.search_overview", type=search_type, count=len(results),
-            total=total_results, page=page_num, total_pages=total_pages))]))
 
+        # Try image card rendering
+        items = []
+        for i, bs in enumerate(results, 1):
+            idx = i + (page_num - 1) * num_per_page
+            items.append({
+                "index": idx,
+                "title": f"{bs.artist} - {bs.title}",
+                "sub": f"by {bs.creator} | {bs.status}" if hasattr(bs, 'creator') else f"ID: {bs.id}",
+                "icon": "🎵",
+            })
+        img_url = await self._render_list_card(
+            f"🔍 {search_type}结果", items,
+            subtitle=f"第 {page_num}/{total_pages} 页 · 共 {total_results} 个",
+        )
+        if img_url:
+            await event.send(MessageChain([Comp.Image.fromURL(img_url)]))
+        else:
+            await event.send(MessageChain([Comp.Plain(get_info(
+                "beatmap.search_overview", type=search_type, count=len(results),
+                total=total_results, page=page_num, total_pages=total_pages))]))
+
+        # Always send text details for each result
         for i, bs in enumerate(results, 1):
             cover_url, text = self._format_beatmapset_info(bs, show_beatmaps=False)
             prefix = f"【{i + (page_num - 1) * num_per_page}/{total_results}】\n" if total_results else f"【{i}】\n"
             chain: list = []
-            if cover_url:
+            if not img_url and cover_url:
                 try:
                     chain.append(Comp.Image.fromURL(cover_url))
                 except Exception:
@@ -2105,7 +2230,7 @@ class OsuTrackPlugin(Star):
             "grades": grades,
         }
         try:
-            return await self.html_render(tmpl, data, options={"omit_background": True})
+            return await self.html_render(tmpl, data, options={"quality": 80})
         except Exception as e:
             logger.debug(f"HTML 渲染用户卡片失败: {e}")
             return None
@@ -2130,7 +2255,7 @@ class OsuTrackPlugin(Star):
             })
         data = {"title": title, "player_name": player_name, "scores": score_data}
         try:
-            return await self.html_render(tmpl, data, options={"omit_background": True})
+            return await self.html_render(tmpl, data, options={"quality": 80})
         except Exception as e:
             logger.debug(f"HTML 渲染成绩卡片失败: {e}")
             return None
@@ -2181,7 +2306,7 @@ class OsuTrackPlugin(Star):
                 "pass_count": f"{bm.passcount:,}" if bm.passcount else None,
             })
         try:
-            return await self.html_render(tmpl, data, options={"omit_background": True})
+            return await self.html_render(tmpl, data, options={"quality": 80})
         except Exception as e:
             logger.debug(f"HTML 渲染谱面卡片失败: {e}")
             return None
@@ -2193,7 +2318,7 @@ class OsuTrackPlugin(Star):
             return None
         data = {"title": title, "subtitle": subtitle, "items": items, "more": more}
         try:
-            return await self.html_render(tmpl, data, options={"omit_background": True})
+            return await self.html_render(tmpl, data, options={"quality": 80})
         except Exception as e:
             logger.debug(f"HTML 渲染列表卡片失败: {e}")
             return None
@@ -2205,7 +2330,7 @@ class OsuTrackPlugin(Star):
             return None
         data = {"title": title, "subtitle": subtitle, "columns": columns, "rows": rows}
         try:
-            return await self.html_render(tmpl, data, options={"omit_background": True})
+            return await self.html_render(tmpl, data, options={"quality": 80})
         except Exception as e:
             logger.debug(f"HTML 渲染排行卡片失败: {e}")
             return None
@@ -2220,25 +2345,60 @@ class OsuTrackPlugin(Star):
         data = {"title": title, "subtitle": subtitle, "icon": icon,
                 "tags": tags, "rank_badge": rank_badge, "sections": sections}
         try:
-            return await self.html_render(tmpl, data, options={"omit_background": True})
+            return await self.html_render(tmpl, data, options={"quality": 80})
         except Exception as e:
             logger.debug(f"HTML 渲染信息卡片失败: {e}")
             return None
+
+    @staticmethod
+    def _adapt_html_content(html: str) -> str:
+        """Sanitize and adapt raw HTML content for the dark-theme card template.
+
+        Strips inline styles, classes, scripts, iframes; resolves relative
+        osu! image URLs; removes <style>/<script> blocks.
+        """
+        # Remove <script> and <style> blocks entirely
+        html = re.sub(r'<script[^>]*>[\s\S]*?</script>', '', html, flags=re.I)
+        html = re.sub(r'<style[^>]*>[\s\S]*?</style>', '', html, flags=re.I)
+        # Remove iframes
+        html = re.sub(r'<iframe[^>]*>[\s\S]*?</iframe>', '', html, flags=re.I)
+        # Strip all inline style attributes
+        html = re.sub(r'\s+style\s*=\s*"[^"]*"', '', html, flags=re.I)
+        html = re.sub(r"\s+style\s*=\s*'[^']*'", '', html, flags=re.I)
+        # Strip all class attributes
+        html = re.sub(r'\s+class\s*=\s*"[^"]*"', '', html, flags=re.I)
+        html = re.sub(r"\s+class\s*=\s*'[^']*'", '', html, flags=re.I)
+        # Strip id attributes
+        html = re.sub(r'\s+id\s*=\s*"[^"]*"', '', html, flags=re.I)
+        # Resolve relative image URLs to absolute osu! URLs
+        html = re.sub(
+            r'(<img[^>]+src\s*=\s*")(/[^"]+)"',
+            r'\1https://osu.ppy.sh\2"',
+            html, flags=re.I
+        )
+        # Remove on* event handlers
+        html = re.sub(r'\s+on\w+\s*=\s*"[^"]*"', '', html, flags=re.I)
+        # Clean up extra whitespace in tags
+        html = re.sub(r'<(\w+)\s+>', r'<\1>', html)
+        return html.strip()
 
     async def _render_content_card(self, title: str, content: str,
                                    author: str = None, date: str = None,
                                    category: str = None, link: str = None,
                                    truncated: bool = False,
                                    raw_html: bool = False) -> str | None:
-        """Render a long-form content card. If raw_html=True, content is inserted as-is."""
+        """Render a long-form content card. If raw_html=True, content is
+        sanitized/adapted for the card theme before rendering."""
         tmpl = self._templates.get("content_card")
         if not tmpl or not self._use_image_output:
             return None
+        if raw_html:
+            content = self._adapt_html_content(content)
         data = {"title": title, "content": content, "author": author,
                 "date": date, "category": category, "link": link,
                 "truncated": truncated, "raw_html": raw_html}
         try:
-            return await self.html_render(tmpl, data, options={"omit_background": True})
+            return await self.html_render(tmpl, data, options={"quality": 80})
         except Exception as e:
             logger.debug(f"HTML 渲染内容卡片失败: {e}")
             return None

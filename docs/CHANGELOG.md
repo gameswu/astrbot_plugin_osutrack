@@ -1,5 +1,23 @@
 # 更新日志
 
+## 0.3.1 - 2026-04-13
+
+### 修复
+- 修复 t2i 图片渲染 HTTP 500 错误（PNG 格式与 quality 参数冲突），改用 JPEG quality:80
+- 修复 LLM 工具同时发送图片和文本的问题，改为图片成功时仅返回简短确认，失败时回退纯文本
+- 修复 OAuth 授权后 `friends.read` scope 丢失的问题（osu! API 不返回 scope 字段时使用请求的 scopes 作为回退）
+
+### 优化
+- 消除图片卡片渲染时的大面积空白区域（移除 `background-attachment: fixed`，使用 flex 布局 + `min-height: 100vh`）
+- News/Wiki 新增 HTML 内容适配方法 `_adapt_html_content()`，自动清理不安全标签/属性、解析相对图片 URL
+- 移除所有内容截断限制（`preview[:300]`、`preview[:800]` 等 6 处），保留模板层 `truncated` 参数
+
+### 功能
+- 绑定成功后自动显示用户卡片
+- `get_beatmapsets`（批量谱面集查询）新增图片卡片渲染
+- `tool_query_wiki`（LLM Wiki 工具）新增图片卡片渲染（Markdown→HTML 转换）
+- content_card 模板增强：新增 figure、figcaption、hr、strong、em、video、div 等 HTML 元素样式
+
 ## 0.3.0 - 2026-04-13
 
 > [!NOTE]

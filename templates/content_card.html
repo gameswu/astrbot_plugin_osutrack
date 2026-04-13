@@ -6,14 +6,15 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    background: transparent;
-    width: 480px;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #fff;
+    overflow: hidden;
   }
   .card {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-    border-radius: 16px;
+    min-height: 100vh;
     padding: 24px;
-    color: #fff;
+    display: flex;
+    flex-direction: column;
     position: relative;
     overflow: hidden;
   }
@@ -65,8 +66,6 @@
     line-height: 1.7;
     color: rgba(255,255,255,0.8);
     word-break: break-word;
-    max-height: 1600px;
-    overflow: hidden;
   }
   .article-body p {
     margin-bottom: 10px;
@@ -86,9 +85,40 @@
     text-decoration: none;
   }
   .article-body img {
-    max-width: 100%;
+    display: block;
+    width: 100%;
+    height: auto;
     border-radius: 8px;
     margin: 8px 0;
+  }
+  .article-body figure {
+    margin: 10px 0;
+  }
+  .article-body figcaption {
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+    text-align: center;
+    margin-top: 4px;
+  }
+  .article-body hr {
+    border: none;
+    height: 1px;
+    background: rgba(255,255,255,0.15);
+    margin: 14px 0;
+  }
+  .article-body video, .article-body embed, .article-body object {
+    max-width: 100%;
+  }
+  .article-body div {
+    max-width: 100%;
+  }
+  .article-body strong, .article-body b {
+    color: #fff;
+    font-weight: 600;
+  }
+  .article-body em, .article-body i {
+    font-style: italic;
+    color: rgba(255,255,255,0.7);
   }
   .article-body ul, .article-body ol {
     padding-left: 20px;
@@ -161,7 +191,8 @@
   }
   .footer {
     text-align: right;
-    margin-top: 14px;
+    margin-top: auto;
+    padding-top: 14px;
     font-size: 11px;
     color: rgba(255,255,255,0.3);
     position: relative;

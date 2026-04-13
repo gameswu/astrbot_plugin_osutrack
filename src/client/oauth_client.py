@@ -34,15 +34,20 @@ class OAuthClient:
     ) -> str:
         return self.api.get_authorization_url(state, scopes)
 
-    async def exchange_code(self, code: str, platform_id: str) -> TokenData:
+    async def exchange_code(self, code: str, platform_id: str, scopes: list[str] | None = None) -> TokenData:
         """Exchange *code* for tokens and persist under *platform_id*."""
         data = await self.api.exchange_code(code)
+        granted_scope = data.get("scope", "")
+        if not granted_scope and scopes:
+            granted_scope = " ".join(scopes)
+        if not granted_scope:
+            granted_scope = "public identify"
         token = TokenData(
             access_token=data["access_token"],
             refresh_token=data["refresh_token"],
             expires_at=time.time() + data.get("expires_in", 86400),
             token_type=data.get("token_type", "Bearer"),
-            scope=data.get("scope", "public identify"),
+            scope=granted_scope,
         )
         self.token_manager.save(platform_id, token)
         return token
